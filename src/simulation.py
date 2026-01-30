@@ -1,9 +1,12 @@
 # ============================================================
 # Probabilistic Unpowered Payload Drop Simulation (MVP)
+# AIRDROP-X
 # Author: Saadee
 # Description:
 #   Physics-based Monte Carlo decision-support module for
 #   unpowered payload airdrop under uncertainty.
+#   Includes UI controls for user-defined threshold, decision modes,
+#   CEP metric, and sensitivity visualizations.
 # ============================================================
 
 # ----------------------------
@@ -11,59 +14,50 @@
 # ----------------------------
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, RadioButtons
 
 # ----------------------------
 # 2. Define constants
 # ----------------------------
-g = 9.81            # gravity (m/s^2)
-dt = 0.01           # time step (s)
-mass = 1.0          # payload mass (kg)
-Cd = 1.0            # drag coefficient (dimensionless)
-rho = 1.225         # air density (kg/m^3)
-A = 0.01            # reference area (m^2)
+g = 9.81
+dt = 0.01
+mass = 1.0
+Cd = 1.0
+rho = 1.225
+A = 0.01
 
 # ----------------------------
 # 3. Initial conditions
 # ----------------------------
-# UAV state at release
-uav_pos = np.array([0.0, 0.0, 100.0])     # x, y, z (m)
-uav_vel = np.array([20.0, 0.0, 0.0])      # vx, vy, vz (m/s)
+uav_pos = np.array([0.0, 0.0, 100.0])
+uav_vel = np.array([20.0, 0.0, 0.0])
 
-# Payload state at release
 payload_pos0 = uav_pos.copy()
 payload_vel0 = uav_vel.copy()
 
-# Target definition
-target_pos = np.array([72.0, 0.0])        # x, y (m)
-target_radius = 5.0                        # acceptable radius (m)
+target_pos = np.array([72.0, 0.0])
+target_radius = 5.0
 
 # ----------------------------
 # 4. Trajectory propagation
 # ----------------------------
 def propagate_trajectory(pos0, vel0, wind):
-    """Propagate payload trajectory after release."""
     pos = pos0.copy()
     vel = vel0.copy()
     trajectory = []
 
     while pos[2] > 0:
-        # Relative velocity
         v_rel = vel - wind
         v_rel_mag = np.linalg.norm(v_rel)
 
-        # Quadratic drag
         if v_rel_mag > 0:
             drag_force = -0.5 * rho * Cd * A * v_rel_mag * v_rel
         else:
             drag_force = np.zeros(3)
 
-        # Acceleration
         acc = np.array([0.0, 0.0, -g]) + drag_force / mass
-
-        # Integrate (Euler)
         vel += acc * dt
         pos += vel * dt
-
         trajectory.append(pos.copy())
 
     return np.array(trajectory)
@@ -73,91 +67,121 @@ def propagate_trajectory(pos0, vel0, wind):
 # ----------------------------
 def monte_carlo_simulation(n_samples, wind_mean, wind_std):
     impact_points = []
-
     for _ in range(n_samples):
         wind_sample = wind_mean + np.random.normal(0, wind_std, size=3)
         traj = propagate_trajectory(payload_pos0, payload_vel0, wind_sample)
         impact_points.append(traj[-1][:2])
-
     return np.array(impact_points)
 
 # ----------------------------
-# 6. Decision logic
+# 6. Metrics & decision logic
 # ----------------------------
-def decision_logic(impact_points, target_pos, target_radius, threshold):
+def compute_hit_probability(impact_points, target_pos, target_radius):
     distances = np.linalg.norm(impact_points - target_pos, axis=1)
     hits = np.sum(distances <= target_radius)
-    probability = hits / len(impact_points)
+    return hits / len(impact_points)
 
-    decision = "DROP" if probability >= threshold else "NO DROP"
 
-    return decision, probability, probability * 100
+def compute_cep(impact_points, target_pos, percentile=50):
+    distances = np.linalg.norm(impact_points - target_pos, axis=1)
+    return np.percentile(distances, percentile)
 
-# ----------------------------
-# 7. Plotting utilities
-# ----------------------------
-def plot_results(impact_points, target_pos, target_radius, decision, probability_percent):
-    plt.figure(figsize=(8, 8))
 
-    plt.scatter(impact_points[:, 0], impact_points[:, 1], alpha=0.5, label="Impact Points")
-
-    circle = plt.Circle(target_pos, target_radius, color='r', fill=False, linewidth=2, label="Target Area")
-    plt.gca().add_patch(circle)
-
-    plt.scatter(target_pos[0], target_pos[1], color='r')
-
-    plt.xlabel("X Position (m)")
-    plt.ylabel("Y Position (m)")
-    plt.title(f"Decision: {decision} | Probability: {probability_percent:.1f}%")
-    plt.axis("equal")
-    plt.grid(True)
-    plt.legend()
-    plt.show(block=False)
+def evaluate_drop_decision(P_hit, P_threshold):
+    return "DROP" if P_hit >= P_threshold else "NO DROP"
 
 # ----------------------------
-# 8. Sensitivity studies
-# ----------------------------
-def probability_vs_distance(distances, n_samples, wind_mean, wind_std, threshold):
-    probs = []
-    for d in distances:
-        impacts = monte_carlo_simulation(n_samples, wind_mean, wind_std)
-        _, _, p = decision_logic(impacts, np.array([d, 0.0]), target_radius, threshold)
-        probs.append(p)
-    return probs
-
-
-def probability_vs_wind(wind_stds, n_samples, wind_mean, target_pos, threshold):
-    probs = []
-    for ws in wind_stds:
-        impacts = monte_carlo_simulation(n_samples, wind_mean, ws)
-        _, _, p = decision_logic(impacts, target_pos, target_radius, threshold)
-        probs.append(p)
-    return probs
-
-# ----------------------------
-# 9. Main execution
+# 7. Main execution + UI
 # ----------------------------
 if __name__ == "__main__":
+
+    np.random.seed(42)
 
     n_samples = 300
     wind_mean = np.array([2.0, 0.0, 0.0])
     wind_std = 0.8
-    threshold = 0.75
 
-    # Core simulation
-    impacts = monte_carlo_simulation(n_samples, wind_mean, wind_std)
-    decision, prob, prob_percent = decision_logic(
-        impacts, target_pos, target_radius, threshold
+    impact_points = monte_carlo_simulation(n_samples, wind_mean, wind_std)
+    P_hit = compute_hit_probability(impact_points, target_pos, target_radius)
+    cep50 = compute_cep(impact_points, target_pos, 50)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    plt.subplots_adjust(left=0.25, bottom=0.3)
+
+    ax.scatter(impact_points[:, 0], impact_points[:, 1], alpha=0.4)
+    ax.add_patch(plt.Circle(target_pos, target_radius, color='r', fill=False))
+    ax.scatter(target_pos[0], target_pos[1], color='r')
+
+    ax.set_xlabel("X Position (m)")
+    ax.set_ylabel("Y Position (m)")
+    ax.axis("equal")
+    ax.grid(True)
+
+    title = ax.set_title("")
+
+    ax_slider = plt.axes([0.25, 0.15, 0.6, 0.03])
+    threshold_slider = Slider(
+        ax=ax_slider,
+        label="Probability Threshold (%)",
+        valmin=50,
+        valmax=95,
+        valinit=75,
+        valstep=0.5
     )
 
-    print(f"Decision: {decision}")
-    print(f"Probability of Success: {prob:.2f} ({prob_percent:.1f}%)")
+    ax_radio = plt.axes([0.025, 0.4, 0.18, 0.2])
+    mode_radio = RadioButtons(
+        ax_radio,
+        ('Conservative', 'Balanced', 'Aggressive'),
+        active=1
+    )
 
-    plot_results(impacts, target_pos, target_radius, decision, prob_percent)
+    mode_thresholds = {
+        'Conservative': 0.90,
+        'Balanced': 0.75,
+        'Aggressive': 0.60
+    }
 
-    # Sensitivity: distance
+    last_control = {'source': 'mode'}
+
+    def update(val=None):
+        selected_mode = mode_radio.value_selected
+
+        if val is not None:
+            last_control['source'] = 'slider'
+
+        if last_control['source'] == 'mode':
+            threshold_slider.eventson = False
+            forced_threshold = mode_thresholds[selected_mode] * 100.0
+            threshold_slider.set_val(forced_threshold)
+            threshold_slider.eventson = True
+            P_threshold = mode_thresholds[selected_mode]
+        else:
+            P_threshold = threshold_slider.val / 100.0
+
+        decision = evaluate_drop_decision(P_hit, P_threshold)
+
+        title.set_text(
+            f"Mode: {selected_mode} | Decision: {decision} | "
+            f"Target Hit % = {P_hit*100:.1f}% | Threshold = {P_threshold*100:.1f}% | CEP50 = {cep50:.2f} m"
+        )
+        fig.canvas.draw_idle()
+
+    threshold_slider.on_changed(update)
+
+    def on_mode_change(label):
+        last_control['source'] = 'mode'
+        update()
+
+    mode_radio.on_clicked(on_mode_change)
+
+    update()
+
     distances = np.linspace(50, 100, 20)
-    probs_dist = probability_vs_distance(distances, n_samples, wind_mean, wind_std, threshold)
+    probs_dist = []
+    for d in distances:
+        impacts = monte_carlo_simulation(n_samples, wind_mean, wind_std)
+        probs_dist.append(compute_hit_probability(impacts, np.array([d, 0.0]), target_radius) * 100)
 
     plt.figure()
     plt.plot(distances, probs_dist, marker='o')
@@ -165,11 +189,12 @@ if __name__ == "__main__":
     plt.ylabel("Probability of Success (%)")
     plt.title("Probability vs Target Distance")
     plt.grid(True)
-    plt.show(block=False)
 
-    # Sensitivity: wind uncertainty
     wind_stds = np.linspace(0.1, 2.0, 15)
-    probs_wind = probability_vs_wind(wind_stds, n_samples, wind_mean, target_pos, threshold)
+    probs_wind = []
+    for ws in wind_stds:
+        impacts = monte_carlo_simulation(n_samples, wind_mean, ws)
+        probs_wind.append(compute_hit_probability(impacts, target_pos, target_radius) * 100)
 
     plt.figure()
     plt.plot(wind_stds, probs_wind, marker='s')
@@ -177,8 +202,5 @@ if __name__ == "__main__":
     plt.ylabel("Probability of Success (%)")
     plt.title("Probability vs Wind Uncertainty")
     plt.grid(True)
-    plt.show(block=False)
-# Keep all figures open
-plt.show()
 
-
+    plt.show()
