@@ -55,6 +55,37 @@ def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
             setattr(cfg, key, value)
 
 
+def get_impact_points_and_metrics(mission_state, random_seed):
+    """
+    Run engine once for the given mission state; return impact points and metrics.
+    For use by product entry point (e.g. UI). Returns (impact_points, P_hit, cep50).
+    """
+    from configs import mission_configs as cfg
+    from src import monte_carlo
+    from src import metrics
+
+    mission_state.validate()
+    engine_inputs = mission_state.export_engine_inputs()
+    saved = {}
+    try:
+        for key in _ENGINE_INPUT_KEYS:
+            saved[key] = getattr(cfg, key)
+        for key, value in engine_inputs.items():
+            setattr(cfg, key, value)
+        np.random.seed(random_seed)
+        impact_points = monte_carlo.run_simulation()
+        target_pos = engine_inputs["target_pos"]
+        target_radius = engine_inputs["target_radius"]
+        P_hit = metrics.compute_hit_probability(
+            impact_points, target_pos, target_radius
+        )
+        cep50 = metrics.compute_cep50(impact_points, target_pos)
+        return (impact_points, P_hit, cep50)
+    finally:
+        for key, value in saved.items():
+            setattr(cfg, key, value)
+
+
 def _resolve_threshold(decision_policy):
     """decision_policy: float (threshold in [0,1]) or str ('Conservative'|'Balanced'|'Aggressive')."""
     if isinstance(decision_policy, (int, float)):
