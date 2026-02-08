@@ -38,15 +38,26 @@ def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
             saved[key] = getattr(cfg, key)
         for key, value in engine_inputs.items():
             setattr(cfg, key, value)
-        np.random.seed(random_seed)
-        impact_points = monte_carlo.run_simulation()
+        impact_points = monte_carlo.run_monte_carlo(
+            cfg.uav_pos,
+            cfg.uav_vel,
+            cfg.mass,
+            cfg.Cd,
+            cfg.A,
+            cfg.rho,
+            cfg.wind_mean,
+            cfg.wind_std,
+            cfg.n_samples,
+            random_seed,
+            dt=cfg.dt,
+        )
         target_pos = engine_inputs["target_pos"]
         target_radius = engine_inputs["target_radius"]
         P_hit = metrics.compute_hit_probability(
             impact_points, target_pos, target_radius
         )
         cep50 = metrics.compute_cep50(impact_points, target_pos)
-        decision, _ = decision_logic.evaluate_drop_decision(
+        decision = decision_logic.evaluate_drop_decision(
             P_hit, probability_threshold
         )
         return (P_hit, decision, cep50)
@@ -72,8 +83,19 @@ def get_impact_points_and_metrics(mission_state, random_seed):
             saved[key] = getattr(cfg, key)
         for key, value in engine_inputs.items():
             setattr(cfg, key, value)
-        np.random.seed(random_seed)
-        impact_points = monte_carlo.run_simulation()
+        impact_points = monte_carlo.run_monte_carlo(
+            cfg.uav_pos,
+            cfg.uav_vel,
+            cfg.mass,
+            cfg.Cd,
+            cfg.A,
+            cfg.rho,
+            cfg.wind_mean,
+            cfg.wind_std,
+            cfg.n_samples,
+            random_seed,
+            dt=cfg.dt,
+        )
         target_pos = engine_inputs["target_pos"]
         target_radius = engine_inputs["target_radius"]
         P_hit = metrics.compute_hit_probability(
@@ -94,8 +116,8 @@ def _resolve_threshold(decision_policy):
             raise ValueError("probability_threshold must be in [0, 1]")
         return t
     if isinstance(decision_policy, str):
-        from src import decision_logic
-        return decision_logic.get_threshold_for_mode(decision_policy.strip())
+        from configs import mission_configs as cfg
+        return cfg.MODE_THRESHOLDS[decision_policy.strip()]
     raise TypeError("decision_policy must be a float (threshold) or a mode name string")
 
 

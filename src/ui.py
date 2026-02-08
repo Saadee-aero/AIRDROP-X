@@ -44,11 +44,11 @@ def launch_ui(impact_points, P_hit, cep50):
 
     def update_display(val=None):
         probability_threshold = threshold_slider.val / 100.0
-        decision, effective_threshold = decision_logic.evaluate_drop_decision(
+        decision = decision_logic.evaluate_drop_decision(
             P_hit, probability_threshold
         )
         hit_pct = P_hit * 100.0
-        threshold_pct = effective_threshold * 100.0
+        threshold_pct = probability_threshold * 100.0
         mode_label = mode_radio.value_selected
         title.set_text(
             f"Mode: {mode_label} | Decision: {decision} | "
@@ -58,7 +58,7 @@ def launch_ui(impact_points, P_hit, cep50):
 
     def on_mode_clicked(label):
         threshold_slider.set_val(
-            decision_logic.get_threshold_for_mode(label) * 100.0
+            cfg.MODE_THRESHOLDS[label] * 100.0
         )
         update_display()
 

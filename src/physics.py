@@ -1,29 +1,30 @@
 import numpy as np
-from configs import mission_configs as cfg
+
+GRAVITY_MAGNITUDE = 9.81
 
 
-def propagate_trajectory(position_0, velocity_0, wind_vector):
-    position = np.array(position_0, dtype=float).copy()
-    velocity = np.array(velocity_0, dtype=float).copy()
-    wind_vector = np.array(wind_vector, dtype=float)
-
+def propagate_payload(pos0, vel0, mass, Cd, A, rho, wind, dt):
+    """
+    3-DOF point-mass in inertial frame. X forward, Y lateral, Z up.
+    Gravity constant in -Z. Drag = -0.5*rho*Cd*A*|v_rel|*v_rel, v_rel = vel - wind.
+    Explicit Euler. Stops when z <= 0. Returns trajectory (N, 3).
+    """
+    pos = np.array(pos0, dtype=float).copy()
+    vel = np.array(vel0, dtype=float).copy()
+    wind = np.array(wind, dtype=float)
     trajectory = []
-    while position[2] > 0:
-        relative_velocity = velocity - wind_vector
-        relative_speed = np.linalg.norm(relative_velocity)
-
-        if relative_speed > 0:
-            drag_magnitude = 0.5 * cfg.rho * cfg.Cd * cfg.A * relative_speed ** 2
-            drag_force = -drag_magnitude * (relative_velocity / relative_speed)
+    gravity = np.array([0.0, 0.0, -GRAVITY_MAGNITUDE])
+    while pos[2] > 0:
+        v_rel = vel - wind
+        v_rel_mag = np.linalg.norm(v_rel)
+        if v_rel_mag > 0:
+            drag_force = -0.5 * rho * Cd * A * v_rel_mag * v_rel
         else:
             drag_force = np.zeros(3)
-
-        gravity = np.array([0.0, 0.0, -cfg.g])
-        acceleration = gravity + drag_force / cfg.mass
-        velocity = velocity + acceleration * cfg.dt
-        position = position + velocity * cfg.dt
-        trajectory.append(position.copy())
-
+        acc = gravity + drag_force / mass
+        vel = vel + acc * dt
+        pos = pos + vel * dt
+        trajectory.append(pos.copy())
     if len(trajectory) == 0:
         return np.empty((0, 3))
     return np.array(trajectory, dtype=float).reshape(-1, 3)
