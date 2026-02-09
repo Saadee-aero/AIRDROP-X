@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 import random
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QCheckBox,
+    QMessageBox,
 )
 
 from configs import mission_configs as cfg
@@ -37,14 +38,28 @@ from product.guidance.advisory_layer import (
 )
 from product.ui import qt_bridge
 from product.ui.tabs import mission_overview, payload_library, sensor_telemetry, analysis, system_status
+from product.integrations.state_buffer import StateBuffer
+from product.integrations.telemetry_contract import TelemetryFrame
+from product.integrations.telemetry_health import check_telemetry_health
 
 
-def run_simulation_from_config(random_seed: int) -> Dict[str, Any]:
+def run_simulation_from_config(
+    random_seed: int,
+    telemetry_frame: Optional[TelemetryFrame] = None,
+) -> Dict[str, Any]:
     """
     Run one engine evaluation and return a simulation snapshot.
 
     The engine and decision logic are treated as a black box. This helper
     only wires config into the engine and packages the results.
+
+    Parameters
+    ----------
+    random_seed : int
+        Random seed for Monte Carlo reproducibility.
+    telemetry_frame : TelemetryFrame, optional
+        If provided, use telemetry position and velocity instead of config
+        defaults. If None, fall back to cfg.uav_pos and cfg.uav_vel.
     """
     payload = Payload(
         mass=cfg.mass,
@@ -56,12 +71,21 @@ def run_simulation_from_config(random_seed: int) -> Dict[str, Any]:
         wind_mean=cfg.wind_mean,
         wind_std=cfg.wind_std,
     )
+
+    # Use telemetry if available; otherwise fall back to config defaults.
+    if telemetry_frame is not None:
+        uav_pos = telemetry_frame.position
+        uav_vel = telemetry_frame.velocity
+    else:
+        uav_pos = cfg.uav_pos
+        uav_vel = cfg.uav_vel
+
     mission_state = MissionState(
         payload=payload,
         target=target,
         environment=environment,
-        uav_position=cfg.uav_pos,
-        uav_velocity=cfg.uav_vel,
+        uav_position=uav_pos,
+        uav_velocity=uav_vel,
     )
     # Engine call: Monte Carlo and metrics.
     impact_points, P_hit, cep50 = get_impact_points_and_metrics(
@@ -82,13 +106,14 @@ def run_simulation_from_config(random_seed: int) -> Dict[str, Any]:
         "mass": cfg.mass,
         "Cd": cfg.Cd,
         "A": cfg.A,
-        "uav_pos": cfg.uav_pos,
-        "uav_vel": cfg.uav_vel,
+        "uav_pos": uav_pos,  # May be from telemetry or config default.
+        "uav_vel": uav_vel,  # May be from telemetry or config default.
         "target_pos": cfg.target_pos,
         "target_radius": cfg.target_radius,
         "wind_mean": cfg.wind_mean,
         "wind_std": cfg.wind_std,
         "mode_thresholds": cfg.MODE_THRESHOLDS,
+        "telemetry_source": telemetry_frame.source if telemetry_frame else "config_default",
     }
 
     results: Dict[str, Any] = {
@@ -118,12 +143,15 @@ def run_simulation_from_config(random_seed: int) -> Dict[str, Any]:
 class AirdropMainWindow(QMainWindow):
     """Qt main window hosting the AIRDROP-X tabs."""
 
-    def __init__(self, snapshot: Dict[str, Any]) -> None:
+    def __init__(self, snapshot: Dict[str, Any], telemetry_buffer: Optional[StateBuffer] = None) -> None:
         super().__init__()
         self.setWindowTitle("AIRDROP-X")
 
         # Current immutable simulation snapshot driving all tabs.
         self._snapshot: Dict[str, Any] = snapshot
+
+        # Telemetry buffer (optional; if None, simulation uses config defaults).
+        self._telemetry_buffer: Optional[StateBuffer] = telemetry_buffer
 
         # Seed regeneration mode (explicitly toggled by operator).
         self._regen_seed_mode: bool = False
@@ -215,7 +243,13 @@ class AirdropMainWindow(QMainWindow):
         self._update_snapshot_banner()
 
     def _on_rerun_clicked(self) -> None:
-        """Explicitly re-run the engine and replace the snapshot."""
+        """
+        Explicitly re-run the engine and replace the snapshot.
+
+        If telemetry is available from StateBuffer, inject it into the
+        simulation configuration. If telemetry is stale or missing, show
+        a warning but proceed with config defaults (do not crash).
+        """
         current_seed = int(self._cfg["random_seed"])
         seed = current_seed
         if self._regen_seed_mode:
@@ -223,8 +257,28 @@ class AirdropMainWindow(QMainWindow):
             seed = random.randint(0, 2**31 - 1)
             print(f"[AIRDROP-X] New non-reproducible seed generated: {seed}")
 
-        # New immutable snapshot from the engine.
-        self._snapshot = run_simulation_from_config(seed)
+        # Attempt to read latest telemetry from StateBuffer.
+        telemetry_frame: Optional[TelemetryFrame] = None
+        if self._telemetry_buffer is not None:
+            telemetry_frame = self._telemetry_buffer.get_latest()
+            if telemetry_frame is None:
+                QMessageBox.warning(
+                    self,
+                    "No Telemetry Available",
+                    "No telemetry frame found in StateBuffer. Using config defaults for UAV position and velocity.",
+                )
+            elif self._telemetry_buffer.is_stale(max_age_seconds=5.0):
+                QMessageBox.warning(
+                    self,
+                    "Stale Telemetry",
+                    f"Latest telemetry frame is stale (>5 seconds old). Using config defaults for UAV position and velocity.\n\n"
+                    f"Telemetry source: {telemetry_frame.source}\n"
+                    f"Telemetry timestamp: {telemetry_frame.timestamp:.2f} s",
+                )
+                telemetry_frame = None  # Ignore stale telemetry.
+
+        # New immutable snapshot from the engine (with or without telemetry).
+        self._snapshot = run_simulation_from_config(seed, telemetry_frame=telemetry_frame)
         # Rebuild all tabs from the new snapshot.
         self._build_tabs()
         self._update_snapshot_banner()
@@ -295,6 +349,13 @@ class AirdropMainWindow(QMainWindow):
         Includes a visible seed banner and a control to switch between
         reproducible and non-reproducible seed behaviour.
         """
+        # Perform telemetry health checks (advisory only).
+        health_warnings = check_telemetry_health(
+            self._telemetry_buffer,
+            stale_threshold_seconds=5.0,
+            min_update_rate_hz=1.0,
+        )
+
         fig = qt_bridge.create_figure()
         status_kwargs = {
             "random_seed": self._cfg.get("random_seed"),
@@ -303,6 +364,14 @@ class AirdropMainWindow(QMainWindow):
         }
         # Pass snapshot timestamp down so System Status can show creation time.
         status_kwargs["snapshot_created_at"] = self._snapshot["created_at"]
+        # Merge telemetry health warnings into System Status warnings.
+        existing_warnings = self._snapshot.get("warnings", [])
+        if health_warnings:
+            # Combine: existing warnings + telemetry health warnings.
+            all_warnings = existing_warnings + health_warnings
+        else:
+            all_warnings = existing_warnings if existing_warnings else ["No active warnings."]
+        status_kwargs["warnings"] = all_warnings
         qt_bridge.render_into_single_axes(fig, system_status.render, **status_kwargs)
 
         canvas = qt_bridge.create_canvas(fig)
@@ -336,14 +405,23 @@ class AirdropMainWindow(QMainWindow):
         return container
 
 
-def main() -> None:
-    """Entry point for the Qt desktop application."""
+def main(telemetry_buffer: Optional[StateBuffer] = None) -> None:
+    """
+    Entry point for the Qt desktop application.
+
+    Parameters
+    ----------
+    telemetry_buffer : StateBuffer, optional
+        If provided, the app will attempt to read telemetry from this buffer
+        when the operator clicks "Re-Run Simulation". If None, all simulations
+        use config defaults for UAV position and velocity.
+    """
     # Default is fully reproducible: use config seed unless operator chooses otherwise.
     initial_seed = cfg.RANDOM_SEED
-    snapshot = run_simulation_from_config(initial_seed)
+    snapshot = run_simulation_from_config(initial_seed, telemetry_frame=None)
 
     app = QApplication(sys.argv)
-    window = AirdropMainWindow(snapshot)
+    window = AirdropMainWindow(snapshot, telemetry_buffer=telemetry_buffer)
     window.resize(1200, 720)
     window.show()
     sys.exit(app.exec())

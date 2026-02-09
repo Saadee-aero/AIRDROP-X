@@ -1,0 +1,44 @@
+[
+    {
+        "timestamp": 0.0,
+        "position": [0.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    },
+    {
+        "timestamp": 1.0,
+        "position": [10.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    },
+    {
+        "timestamp": 2.0,
+        "position": [20.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    },
+    {
+        "timestamp": 3.0,
+        "position": [30.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    },
+    {
+        "timestamp": 4.0,
+        "position": [40.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    },
+    {
+        "timestamp": 5.0,
+        "position": [50.0, 0.0, 100.0],
+        "velocity": [10.0, 0.0, 0.0],
+        "attitude": [0.0, 0.0, 0.0],
+        "source": "replayed"
+    }
+]
