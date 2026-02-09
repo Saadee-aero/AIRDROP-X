@@ -319,9 +319,11 @@ class AirdropMainWindow(QMainWindow):
 
         Controls in this tab do NOT trigger a new engine run, so we render in
         non-interactive mode and mark this as locked for the current snapshot.
+
+        Use same figsize and content rect as main.py so layout is symmetrical.
         """
-        fig = qt_bridge.create_figure()
-        ax = fig.add_subplot(1, 1, 1)
+        fig = qt_bridge.create_figure(figsize=(10.0, 6.0))
+        ax = fig.add_axes([0.06, 0.06, 0.88, 0.78])
         payload_library.render(ax, fig, interactive=False)
         return self._wrap_canvas(fig)
 
@@ -405,6 +407,43 @@ class AirdropMainWindow(QMainWindow):
         return container
 
 
+# Military HUD styling: dark background, green accent, monospace
+_HUD_STYLESHEET = """
+    QMainWindow, QWidget { background-color: #0c0e0c; }
+    QLabel { color: #c0d0c0; font-family: Consolas, monospace; font-size: 9pt; }
+    QPushButton {
+        background-color: #141814;
+        color: #00ff41;
+        border: 1px solid #2a3a2a;
+        font-family: Consolas, monospace;
+        font-size: 9pt;
+        padding: 4px 10px;
+    }
+    QPushButton:hover { background-color: #1e221e; border-color: #00ff41; }
+    QPushButton:pressed { background-color: #0f120f; }
+    QTabWidget::pane {
+        border: 1px solid #2a3a2a;
+        top: -1px;
+        background-color: #0c0e0c;
+    }
+    QTabBar::tab {
+        background-color: #141814;
+        color: #6b8e6b;
+        border: 1px solid #2a3a2a;
+        border-bottom: none;
+        padding: 6px 14px;
+        margin-right: 2px;
+        font-family: Consolas, monospace;
+        font-size: 9pt;
+    }
+    QTabBar::tab:selected { color: #00ff41; background-color: #0c0e0c; }
+    QTabBar::tab:hover:!selected { color: #90e090; }
+    QCheckBox { color: #c0d0c0; font-family: Consolas, monospace; font-size: 9pt; }
+    QCheckBox::indicator { border: 1px solid #2a3a2a; background-color: #141814; }
+    QCheckBox::indicator:checked { background-color: #00ff41; }
+"""
+
+
 def main(telemetry_buffer: Optional[StateBuffer] = None) -> None:
     """
     Entry point for the Qt desktop application.
@@ -421,6 +460,7 @@ def main(telemetry_buffer: Optional[StateBuffer] = None) -> None:
     snapshot = run_simulation_from_config(initial_seed, telemetry_frame=None)
 
     app = QApplication(sys.argv)
+    app.setStyleSheet(_HUD_STYLESHEET)
     window = AirdropMainWindow(snapshot, telemetry_buffer=telemetry_buffer)
     window.resize(1200, 720)
     window.show()

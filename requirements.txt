@@ -1,0 +1,7 @@
+# AIRDROP-X runtime (CLI and Qt desktop app)
+numpy>=1.20
+matplotlib>=3.5
+PyQt6>=6.4
+
+# Optional: for building Windows EXE
+# pyinstaller>=6.0
