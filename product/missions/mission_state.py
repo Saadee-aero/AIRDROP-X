@@ -58,6 +58,8 @@ class MissionState:
     def uav_position(self, value):
         if value is None:
             raise ValueError("uav_position must not be None")
+        if len(value) != 3:
+            raise ValueError(f"uav_position must have 3 elements (x, y, z), got {len(value)}")
         v = (float(value[0]), float(value[1]), float(value[2]))
         self._uav_position = v
 
@@ -69,6 +71,8 @@ class MissionState:
     def uav_velocity(self, value):
         if value is None:
             raise ValueError("uav_velocity must not be None")
+        if len(value) != 3:
+            raise ValueError(f"uav_velocity must have 3 elements (vx, vy, vz), got {len(value)}")
         v = (float(value[0]), float(value[1]), float(value[2]))
         self._uav_velocity = v
 

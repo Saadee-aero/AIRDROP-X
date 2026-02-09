@@ -32,6 +32,11 @@ def parse_uav_state(raw):
             float(raw.get("y", 0)),
             float(raw.get("z", raw.get("altitude", 0))),
         )
+    
+    # Advisory range check (telemetry might be valid but extreme)
+    if pos[2] < -500.0:
+        print(f"[TELEM WARNING] Altitude {pos[2]:.1f} m is very low (<-500m). Check coordinate frame (NED vs ENU).")
+
     v = raw.get("velocity")
     if isinstance(v, (list, tuple)) and len(v) >= 3:
         vel = (float(v[0]), float(v[1]), float(v[2]))
@@ -43,6 +48,12 @@ def parse_uav_state(raw):
             float(raw.get("vy", 0)),
             float(raw.get("vz", 0)),
         )
+
+    # Advisory velocity check (supersonic?)
+    speed_sq = vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]
+    if speed_sq > 340.0*340.0:
+        print(f"[TELEM WARNING] Velocity magnitude > 340 m/s. Supersonic input detected.")
+
     return UAVStateSnapshot(t, pos, vel)
 
 

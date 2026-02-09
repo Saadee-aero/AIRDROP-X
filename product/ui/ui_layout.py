@@ -82,7 +82,8 @@ def launch_unified_ui(
         if index == 0:
             mission_overview.render(content_ax, **mission_data)
         elif index == 1:
-            payload_library.render(content_ax, fig)
+            # Pass callback if provided
+            payload_library.render(content_ax, fig, run_simulation_callback=run_simulation_callback)
         elif index == 2:
             tabs.TABS[2][1](content_ax)
         elif index == 3:

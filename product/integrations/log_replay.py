@@ -28,7 +28,13 @@ def _detect_csv_columns(reader):
     time_candidates = ["time_s", "time", "t", "timestamp"]
     time_key = next((f for f in reader.fieldnames if f.strip().lower() in time_candidates), None)
     if time_key is None and reader.fieldnames:
-        time_key = reader.fieldnames[0]
+        # Fallback: try first column, but log a warning or be strict.
+        # Strict mode: require explicit time column.
+        # time_key = reader.fieldnames[0]  <-- OLD loose behavior
+        raise ValueError(
+            f"Could not automatically detect time column in CSV header: {reader.fieldnames}. "
+            f"Expected one of: {time_candidates}"
+        )
 
     def find_xyz(prefixes, suffixes):
         out = []
