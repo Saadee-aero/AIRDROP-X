@@ -76,19 +76,21 @@ def render(
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    # 2x2 layout: top-left prob vs distance, top-right impact dispersion,
-    # bottom-left prob vs wind uncertainty, bottom-right CEP summary
+    # 2x2 layout: top row (impact + prob/distance), bottom row (wind sensitivity + CEP)
+    # Extra gap between rows so impact dispersion X label stays inside its panel
     margin = 0.02
     w = 0.46
-    h = 0.44
-    gap = 0.02
-    tl = [margin, 0.5 + gap, w, h]
-    tr = [margin + w + gap, 0.5 + gap, w, h]
-    bl = [margin, margin, w, h]
-    br = [margin + w + gap, margin, w, h]
+    row_gap = 0.06
+    h_bottom = 0.44
+    h_top = 0.38
+    tl = [margin, 1.0 - margin - h_top, w, h_top]
+    tr = [margin + w + 0.02, 1.0 - margin - h_top, w, h_top]
+    bl = [margin, margin, w, h_bottom]
+    br = [margin + w + 0.02, margin, w, h_bottom]
 
     # Top-left: Probability vs target distance
     ax_tl = ax.inset_axes(tl)
+    ax_tl.set_clip_on(True)
     if prob_vs_distance is not None and len(prob_vs_distance) == 2:
         x_vals, y_vals = prob_vs_distance[0], prob_vs_distance[1]
         if len(x_vals) and len(y_vals):
@@ -104,6 +106,7 @@ def render(
 
     # Top-right: Impact dispersion
     ax_tr = ax.inset_axes(tr)
+    ax_tr.set_clip_on(True)
     if impact_points is not None and target_position is not None and np.size(impact_points) >= 2:
         impact_points = np.asarray(impact_points, dtype=float)
         if impact_points.ndim == 1:
@@ -117,6 +120,7 @@ def render(
 
     # Bottom-left: Probability vs wind uncertainty
     ax_bl = ax.inset_axes(bl)
+    ax_bl.set_clip_on(True)
     if prob_vs_wind_uncertainty is not None and len(prob_vs_wind_uncertainty) == 2:
         x_vals, y_vals = prob_vs_wind_uncertainty[0], prob_vs_wind_uncertainty[1]
         if len(x_vals) and len(y_vals):
@@ -132,4 +136,5 @@ def render(
 
     # Bottom-right: CEP summary
     ax_br = ax.inset_axes(br)
+    ax_br.set_clip_on(True)
     _cep_summary_panel(ax_br, cep50, target_hit_percentage)

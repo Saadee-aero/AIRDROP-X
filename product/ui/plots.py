@@ -25,6 +25,9 @@ def plot_impact_dispersion(
 ):
     impact_points = np.asarray(impact_points, dtype=float)
     target_position = np.asarray(target_position, dtype=float).reshape(2)
+    r_target = float(target_radius) if target_radius is not None else 0.0
+    r_cep = float(cep50) if (cep50 is not None and cep50 > 0) else 0.0
+    r_max = max(r_target, r_cep)
 
     ax.set_facecolor(_PANEL)
     ax.tick_params(colors=_LABEL)
@@ -33,17 +36,32 @@ def plot_impact_dispersion(
     for spine in ax.spines.values():
         spine.set_color(_BORDER)
 
-    ax.scatter(impact_points[:, 0], impact_points[:, 1], color=_SCATTER, alpha=0.35, s=10, edgecolors="none")
+    ax.scatter(impact_points[:, 0], impact_points[:, 1], color=_SCATTER, alpha=0.35, s=10, edgecolors="none", clip_on=True)
     ax.add_patch(
-        plt.Circle(target_position, target_radius, color=_TARGET_RING, fill=False, linewidth=1.5)
+        plt.Circle(target_position, target_radius, color=_TARGET_RING, fill=False, linewidth=1.5, clip_on=True)
     )
-    ax.scatter(target_position[0], target_position[1], color=_TARGET_RING, s=40, zorder=5, edgecolors=_PANEL, linewidths=0.5)
+    ax.scatter(target_position[0], target_position[1], color=_TARGET_RING, s=40, zorder=5, edgecolors=_PANEL, linewidths=0.5, clip_on=True)
     if cep50 is not None and cep50 > 0:
         ax.add_patch(
-            plt.Circle(target_position, cep50, color=_CEP_RING, fill=False, linestyle="--", linewidth=1)
+            plt.Circle(target_position, cep50, color=_CEP_RING, fill=False, linestyle="--", linewidth=1, clip_on=True)
         )
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
+
+    x_min = min(impact_points[:, 0].min(), target_position[0] - r_max)
+    x_max = max(impact_points[:, 0].max(), target_position[0] + r_max)
+    y_min = min(impact_points[:, 1].min(), target_position[1] - r_max)
+    y_max = max(impact_points[:, 1].max(), target_position[1] + r_max)
+    dx = max(x_max - x_min, 1e-6)
+    dy = max(y_max - y_min, 1e-6)
+    margin = 0.08 * max(dx, dy)
+    half = max(dx, dy) * 0.5 + margin
+    cx = (x_min + x_max) * 0.5
+    cy = (y_min + y_max) * 0.5
+    ax.set_xlim(cx - half, cx + half)
+    ax.set_ylim(cy - half, cy + half)
+
+    ax.set_xlabel("X (m)", labelpad=0)
+    ax.set_ylabel("Y (m)", labelpad=0)
+    ax.tick_params(axis="both", pad=2)
     ax.axis("equal")
     ax.grid(True, color=_GRID, alpha=0.6, linestyle="-")
 
@@ -53,7 +71,8 @@ def plot_sensitivity(ax, x_values, y_values, x_label, y_label, title=None):
     y_values = np.asarray(y_values, dtype=float)
     ax.set_facecolor(_PANEL)
     ax.tick_params(colors=_LABEL)
-    ax.plot(x_values, y_values, color=_ACCENT)
+    ax.plot(x_values, y_values, color=_ACCENT, clip_on=True)
+    ax.margins(x=0.04, y=0.04)
     ax.set_xlabel(x_label, color=_LABEL)
     ax.set_ylabel(y_label, color=_LABEL)
     ax.grid(True, color=_GRID, alpha=0.6)

@@ -10,6 +10,7 @@ from . import tabs
 from .tabs import mission_overview
 from .tabs import payload_library
 from .tabs import analysis
+from .tabs import system_status
 
 
 _TAB_BG = "#141814"
@@ -47,6 +48,9 @@ def launch_unified_ui(
     slider_step,
     mode_thresholds,
     on_threshold_change,
+    random_seed=None,
+    n_samples=None,
+    dt=None,
 ):
     """
     Create one figure with tab bar and content area. Only one tab's content
@@ -80,6 +84,8 @@ def launch_unified_ui(
         elif index == 1:
             payload_library.render(content_ax, fig)
         elif index == 2:
+            tabs.TABS[2][1](content_ax)
+        elif index == 3:
             analysis.render(
                 content_ax,
                 impact_points=mission_data["impact_points"],
@@ -87,6 +93,13 @@ def launch_unified_ui(
                 target_radius=mission_data["target_radius"],
                 cep50=mission_data["cep50"],
                 target_hit_percentage=mission_data["target_hit_percentage"],
+            )
+        elif index == 4:
+            system_status.render(
+                content_ax,
+                random_seed=random_seed,
+                n_samples=n_samples,
+                dt=dt,
             )
         else:
             tabs.TABS[index][1](content_ax)
