@@ -64,7 +64,7 @@ PAYLOAD_LIBRARY = [
         "name": "Medical Kit",
         "category": "Humanitarian / Relief",
         "subcategory": "Medical",
-        "notes": "Standard fast-aid kit.",
+        "notes": "Standard first-aid kit.",
         "description": "Emergency medical supplies."
     },
     {
@@ -713,7 +713,8 @@ class PayloadLibraryTab:
         # Dropdown button (figure coords, inside left panel)
         btn_ax = fig.add_axes([0.04, 0.84, 0.22, 0.05])
         btn_ax.set_facecolor(BG_INPUT)
-        curr = _get_archetype(self._state["selected_index"])["name"] if has_sel else "Select Payload..."
+        _p = _get_archetype(self._state["selected_index"]) if has_sel else None
+        curr = _p["name"] if _p else "Select Payload..."
         main_btn = Button(btn_ax, f"  {curr}  \u25BC", color=BG_INPUT, hovercolor=BG_PANEL)
         main_btn.label.set_color(TEXT_PRIMARY); main_btn.label.set_fontsize(8); main_btn.label.set_fontfamily("monospace")
         self._widget_refs["_buttons"].append(main_btn)
@@ -734,9 +735,10 @@ class PayloadLibraryTab:
         # Selection info
         if has_sel:
              p = _get_archetype(self._state["selected_index"])
-             left.text(0.5, 0.28, p["notes"], transform=left.transAxes, ha="center", fontsize=7, color=TEXT_PRIMARY, wrap=True, family="monospace")
-             left.text(0.5, 0.12, p.get("category", ""), transform=left.transAxes, ha="center", fontsize=6, color=ACCENT_GO, family="monospace")
-             left.text(0.5, 0.05, p.get("subcategory", ""), transform=left.transAxes, ha="center", fontsize=6, color="gray", family="monospace")
+             if p:
+                 left.text(0.5, 0.28, p["notes"], transform=left.transAxes, ha="center", fontsize=7, color=TEXT_PRIMARY, wrap=True, family="monospace")
+                 left.text(0.5, 0.12, p.get("category", ""), transform=left.transAxes, ha="center", fontsize=6, color=ACCENT_GO, family="monospace")
+                 left.text(0.5, 0.05, p.get("subcategory", ""), transform=left.transAxes, ha="center", fontsize=6, color="gray", family="monospace")
 
         # ── CENTER TOP: Analysis ─────────────────────────────────────────
         vis = ax.inset_axes([0.30, 0.50, 0.26, 0.47])
@@ -746,8 +748,8 @@ class PayloadLibraryTab:
         
         if has_sel:
             p = _get_archetype(self._state["selected_index"])
-            vis.text(0.5, 0.78, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=7, color=TEXT_PRIMARY, wrap=True)
-            
+            if p:
+                vis.text(0.5, 0.78, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=7, color=TEXT_PRIMARY, wrap=True)
             warn_y = 0.55
             rho = self._state.get("calculated_density")
             if rho:
