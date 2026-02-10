@@ -2,8 +2,8 @@
   "site_package_search_strategy": "pep561",
   "source_directories": ["."],
   "search_path": [
-    {"site-package": "matplotlib"},
-    {"site-package": "numpy"}
+    "C:\\Users\\sahad\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages",
+    "."
   ],
   "strict": false,
   "python_version": "3.10"

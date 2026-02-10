@@ -10,120 +10,92 @@ from product.guidance.advisory_layer import (
 )
 from product.ui.ui_layout import launch_unified_ui
 
-if __name__ == "__main__":
-    # Initial generic payload from config (as Library is now dynamic)
-    payload = Payload(
-        mass=cfg.mass,
-        drag_coefficient=cfg.Cd,
-        reference_area=cfg.A,
-    )
+
+def _build_mission_state(payload_config=None):
+    """
+    Build a MissionState from config defaults, optionally overriding payload
+    with a custom dict from the Dynamic Payload Builder.
+    """
+    if payload_config:
+        payload = Payload(
+            mass=payload_config.get("mass", cfg.mass),
+            drag_coefficient=payload_config.get("drag_coefficient", cfg.Cd),
+            reference_area=payload_config.get("reference_area", cfg.A),
+        )
+    else:
+        payload = Payload(
+            mass=cfg.mass,
+            drag_coefficient=cfg.Cd,
+            reference_area=cfg.A,
+        )
+
     target = Target(position=cfg.target_pos, radius=cfg.target_radius)
-    environment = Environment(
-        wind_mean=cfg.wind_mean,
-        wind_std=cfg.wind_std,
-    )
-    mission_state = MissionState(
+    environment = Environment(wind_mean=cfg.wind_mean, wind_std=cfg.wind_std)
+
+    return MissionState(
         payload=payload,
         target=target,
         environment=environment,
         uav_position=cfg.uav_pos,
         uav_velocity=cfg.uav_vel,
     )
-    impact_points, P_hit, cep50 = get_impact_points_and_metrics(
-        mission_state,
-        cfg.RANDOM_SEED,
-    )
-# (No content to replace. I am deleting lines. Wait, I should not leave it empty if I select specific lines. 
-# I will just replace the block with nothing or a comment.)
-# Cleaning up legacy code block.
 
 
 def run_simulation(payload_config=None):
     """
     Run the full simulation loop.
-    If payload_config is provided (dict), use it to create the Payload.
-    Otherwise, use default from configs.
+    If payload_config is provided (dict from Payload Builder), use it.
+    Otherwise, use defaults from configs.mission_configs.
+    Returns (impact_points, advisory_result).
     """
-    print(f"\\n--- Starting Simulation ---")
+    print(f"\n--- Starting Simulation ---")
     if payload_config:
         print(f"Using Custom Payload: {payload_config.get('name', 'Unknown')}")
-        mass = payload_config.get("mass", 5.0)
-        cd = payload_config.get("drag_coefficient", 0.5)
-        area = payload_config.get("reference_area", 0.01)
-        # Reconstruct Payload object
-        payload = Payload(mass=mass, drag_coefficient=cd, reference_area=area)
-    else:
-        # Default
-        payload = Payload(
-            mass=cfg.payload.mass_kg,
-            drag_coefficient=cfg.payload.drag_coefficient,
-            reference_area=cfg.payload.area_m2
-        )
 
-    # Initialize Other Components
-    target = Target(
-        position=cfg.target.position,
-        radius=cfg.target.radius_m
+    mission_state = _build_mission_state(payload_config)
+
+    # Run Monte Carlo + metrics
+    impact_points, P_hit, cep50 = get_impact_points_and_metrics(
+        mission_state, cfg.RANDOM_SEED
     )
-    
-    # Environment
-    env = Environment() 
-    
-    # Mission State
-    state = MissionState(
-        payload=payload,
-        target=target,
-        environment=env
+
+    # Evaluate advisory (directional analysis)
+    advisory_result = evaluate_advisory(
+        mission_state, "Balanced", random_seed=cfg.RANDOM_SEED
     )
-    
-    # Run Landing Point Estimator (LPE)
-    from product.lpe.lpe_core import get_impact_points
-    impact_points = get_impact_points(state, n_samples=50) 
-    
-    # Evaluate Advisory
-    advisory_result = evaluate_advisory(impact_points, target)
-    print(f"Advisory: {advisory_result.current_feasibility}")
-    
-    # Calculate Metrics
-    from product.lpe.lpe_core import calculate_cep50, calculate_hit_probability
-    cep50 = calculate_cep50(impact_points, target.position)
-    p_hit = calculate_hit_probability(impact_points, target)
-    
+
     print(f"  -> CEP50: {cep50:.2f} m")
-    print(f"  -> P(Hit): {p_hit*100:.1f} %")
-    return impact_points, advisory_result
+    print(f"  -> P(Hit): {P_hit*100:.1f} %")
+    print(f"  -> Advisory: {advisory_result.current_feasibility}")
+
+    return impact_points, advisory_result, P_hit, cep50
 
 
 def main():
-    # Initial Default Run
-    impacts, adv = run_simulation()
-    
-    # Calculate initial display metrics
-    # Re-calc for initial (or return from run_sim)
-    cep50 = calculate_cep50(impacts, cfg.target.position)
-    p_hit = calculate_hit_probability(impacts, Target(cfg.target.position, cfg.target.radius_m))
+    """Entry point: run simulation and launch UI."""
+    impacts, adv, p_hit, cep50 = run_simulation()
 
-    # Launch UI
-    # We pass 'run_simulation' as the callback.
-    # Note: The UI callback expects to trigger logic.
     launch_unified_ui(
         impact_points=impacts,
         P_hit=p_hit,
         cep50=cep50,
-        target_position=cfg.target.position,
-        target_radius=cfg.target.radius_m,
-        mission_state=None, # simplified
+        target_position=cfg.target_pos,
+        target_radius=cfg.target_radius,
+        mission_state=None,
         advisory_result=adv,
-        initial_threshold_percent=cfg.constraints.max_wind_speed_m_s, # Placeholder mapping
+        initial_threshold_percent=cfg.THRESHOLD_SLIDER_INIT,
         initial_mode="standard",
-        slider_min=0, slider_max=20, slider_step=1,
-        mode_thresholds={},
+        slider_min=cfg.THRESHOLD_SLIDER_MIN,
+        slider_max=cfg.THRESHOLD_SLIDER_MAX,
+        slider_step=cfg.THRESHOLD_SLIDER_STEP,
+        mode_thresholds=cfg.MODE_THRESHOLDS,
         on_threshold_change=lambda x: None,
-        random_seed=42,
-        n_samples=50,
-        dt=0.1,
-        run_simulation_callback=run_simulation # <--- NEW
+        random_seed=cfg.RANDOM_SEED,
+        n_samples=cfg.n_samples,
+        dt=cfg.dt,
+        run_simulation_callback=run_simulation,
     )
+
 
 if __name__ == "__main__":
     main()

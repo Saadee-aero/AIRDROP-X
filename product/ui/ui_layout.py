@@ -53,6 +53,7 @@ def launch_unified_ui(
     random_seed=None,
     n_samples=None,
     dt=None,
+    run_simulation_callback=None,
 ):
     """
     Create one figure with tab bar and content area. Only one tab's content

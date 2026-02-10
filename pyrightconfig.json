@@ -1,13 +1,22 @@
 {
     "include": [
-        "."
+        "e:\\AIRDROP-X"
     ],
     "extraPaths": [
-        "."
+        "e:\\AIRDROP-X"
     ],
     "pythonVersion": "3.10",
     "pythonPlatform": "Windows",
     "reportMissingImports": "warning",
     "reportMissingModuleSource": "none",
-    "typeCheckingMode": "basic"
+    "typeCheckingMode": "basic",
+    "venvPath": "C:\\Users\\sahad\\AppData\\Local\\Programs\\Python\\Python310",
+    "executionEnvironments": [
+        {
+            "root": "e:\\AIRDROP-X",
+            "extraPaths": [
+                "e:\\AIRDROP-X"
+            ]
+        }
+    ]
 }
