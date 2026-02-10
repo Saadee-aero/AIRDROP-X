@@ -270,7 +270,7 @@ class PayloadLibraryTab:
         self._geom_axes = []
         
         # Dropdown State
-        self._showing = None
+        self._showing = False
         self._expanded_category = None
 
     def _sync_state_from_archetype(self, index):
@@ -464,15 +464,11 @@ class PayloadLibraryTab:
         self._payload_buttons.clear()
         self._category_axes.clear()
         self._category_buttons.clear()
-        self._showing = None
+        self._showing = False
         self._expanded_category = None
 
     def _redraw_dropdown(self, fig, main_btn, expanded_label, on_category_click_cb):
         self._clear_all_choice_buttons(fig)
-        
-        # Use existing logic for dropdown... 
-        # (For brevity in this tool call, implementing simplified logic or reusing original logic structure)
-        # Re-using logic structure from original file approx lines 662-736
         
         expanded_idx = None
         if expanded_label is not None:
@@ -480,10 +476,11 @@ class PayloadLibraryTab:
                 if c == expanded_label: 
                     expanded_idx = idx; break
         
-        y = 0.58 - 0.004
+        # Position dropdown below the button (button is at ~0.82 in figure coords)
+        y = 0.78
         for i, cat in enumerate(CATEGORIES):
-            bottom = y - 0.052
-            ax_c = fig.add_axes([0.08, bottom, 0.22, 0.052])
+            bottom = y - 0.048
+            ax_c = fig.add_axes([0.04, bottom, 0.22, 0.048])
             ax_c.set_facecolor(BG_PANEL)
             for s in ax_c.spines.values(): s.set_color(ACCENT_GO)
             is_exp = expanded_idx == i
@@ -499,15 +496,15 @@ class PayloadLibraryTab:
             
             if is_exp:
                 payloads_in_cat = _payloads_for_category(cat)
-                y -= 0.006
+                y -= 0.004
                 for idx, p in payloads_in_cat:
                     pname = p["name"]
                     y -= 0.002
-                    p_bottom = y - 0.036
-                    ax_p = fig.add_axes([0.08 + 0.018, p_bottom, 0.202, 0.036])
+                    p_bottom = y - 0.034
+                    ax_p = fig.add_axes([0.06, p_bottom, 0.20, 0.034])
                     ax_p.set_facecolor(BG_INPUT)
                     for s in ax_p.spines.values(): s.set_color(BORDER_SUBTLE)
-                    lbl = pname[:18] + "..." if len(pname)>18 else pname
+                    lbl = pname[:20] + ".." if len(pname)>20 else pname
                     bp = Button(ax_p, "  " + lbl + "  ", color=BG_INPUT, hovercolor=BG_PANEL)
                     bp.label.set_color(TEXT_PRIMARY); bp.label.set_fontsize(7); bp.label.set_fontfamily("monospace")
                     self._payload_axes.append(ax_p); self._payload_buttons.append(bp)
@@ -523,6 +520,9 @@ class PayloadLibraryTab:
                     bp.on_clicked(_p_cb(idx))
                     y = p_bottom - 0.002
                 y -= 0.004
+        
+        self._showing = True
+        fig.canvas.draw()
 
     def _rebuild_geometry_ui(self, fig):
         # Clear existing geometry specific widgets
@@ -702,14 +702,21 @@ class PayloadLibraryTab:
         
         has_sel = self._state["selected_index"] >= 0
 
+        # =====================================================================
+        # LAYOUT — Three-column grid with consistent alignment
+        # LEFT:   Identity + Dropdown    [0.02, 0.08, 0.26, 0.88]
+        # CENTER: Analysis (top) + BC (bottom)
+        # RIGHT:  Physics Parameters      [0.58, 0.08, 0.40, 0.88]
+        # =====================================================================
+
         # --- LEFT: Identity ---
-        left = ax.inset_axes([0.02, 0.48, 0.26, 0.50])
+        left = ax.inset_axes([0.02, 0.08, 0.26, 0.88])
         left.set_facecolor(BG_PANEL); left.set_axis_off()
         left.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=left.transAxes))
-        left.text(0.5, 0.96, "STEP 1: IDENTITY", transform=left.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
+        left.text(0.5, 0.97, "STEP 1: IDENTITY", transform=left.transAxes, fontsize=9, color=TEXT_LABEL, ha="center", va="top")
         
-        # Main Dropdown Button
-        btn_ax = fig.add_axes([0.04, 0.75, 0.22, 0.065])
+        # Main Dropdown Button (inside left panel area)
+        btn_ax = fig.add_axes([0.04, 0.82, 0.22, 0.055])
         btn_ax.set_facecolor(BG_INPUT)
         curr = _get_archetype(self._state["selected_index"])["name"] if has_sel else "Select Payload..."
         main_btn = Button(btn_ax, f"  {curr}  \u25BC  ", color=BG_INPUT, hovercolor=BG_PANEL)
@@ -731,61 +738,62 @@ class PayloadLibraryTab:
         # Description Text
         if has_sel:
              p = _get_archetype(self._state["selected_index"])
-             left.text(0.5, 0.50, p["notes"], transform=left.transAxes, ha="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
+             left.text(0.5, 0.30, p["notes"], transform=left.transAxes, ha="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
+             left.text(0.5, 0.15, p.get("category", ""), transform=left.transAxes, ha="center", fontsize=7, color=ACCENT_GO)
 
-        # --- CENTER: Info / Warnings ---
-        vis = ax.inset_axes([0.30, 0.48, 0.26, 0.50])
+        # --- CENTER TOP: Analysis / Warnings ---
+        vis = ax.inset_axes([0.30, 0.48, 0.26, 0.48])
         vis.set_facecolor(BG_PANEL); vis.set_axis_off()
         vis.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=vis.transAxes))
         vis.text(0.5, 0.96, "ANALYSIS", transform=vis.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         if has_sel:
             p = _get_archetype(self._state["selected_index"])
-            vis.text(0.5, 0.85, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
+            vis.text(0.5, 0.80, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
             
             # Validation Warnings
-            warn_y = 0.60
+            warn_y = 0.55
             rho = self._state.get("calculated_density")
             if rho:
                 if rho < 10: 
-                    vis.text(0.5, warn_y, "WARNING: Extremely Low Density (<10 kg/m³)", color="orange", ha="center", fontsize=8); warn_y -= 0.1
+                    vis.text(0.5, warn_y, "WARNING: Low Density (<10 kg/m³)", color="orange", ha="center", fontsize=7); warn_y -= 0.12
                 elif rho > 20000:
-                    vis.text(0.5, warn_y, "WARNING: Extremely High Density (>20k kg/m³)", color="red", ha="center", fontsize=8); warn_y -= 0.1
+                    vis.text(0.5, warn_y, "WARNING: High Density (>20k kg/m³)", color="red", ha="center", fontsize=7); warn_y -= 0.12
                 else:
-                    vis.text(0.5, warn_y, f"Density: {rho:.1f} kg/m³ (OK)", color="gray", ha="center", fontsize=8); warn_y -= 0.1
+                    vis.text(0.5, warn_y, f"Density: {rho:.1f} kg/m³ (OK)", color="gray", ha="center", fontsize=7); warn_y -= 0.12
             
             cfg = self.get_payload_config()
             bc = cfg["ballistic_coefficient"]
             if bc is not None and float(bc) > 1000:
-                 vis.text(0.5, warn_y, "WARNING: Kinetic Penetrator (BC > 1000)", color="red", ha="center", fontsize=8)
+                 vis.text(0.5, warn_y, "WARNING: Kinetic Penetrator (BC > 1000)", color="red", ha="center", fontsize=7)
 
         # --- RIGHT: Parameters (Dynamic) ---
         param_bg = ax.inset_axes([0.58, 0.08, 0.40, 0.88])
         param_bg.set_facecolor(BG_PANEL); param_bg.set_axis_off()
         param_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=param_bg.transAxes))
-        param_bg.text(0.5, 0.96, "STEP 2 & 3: PHYSICS", transform=param_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
+        param_bg.text(0.5, 0.97, "STEP 2 & 3: PHYSICS", transform=param_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center", va="top")
         
-        # BC Box (Persistent)
-        bc_bg = ax.inset_axes([0.30, 0.08, 0.26, 0.38]) # Bottom Center
+        # --- CENTER BOTTOM: Ballistic Coefficient ---
+        bc_bg = ax.inset_axes([0.30, 0.08, 0.26, 0.38])
         bc_bg.set_facecolor(BG_PANEL); bc_bg.set_axis_off()
         bc_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=bc_bg.transAxes))
-        bc_bg.text(0.5, 0.85, "BALLISTIC COEFF", transform=bc_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
+        bc_bg.text(0.5, 0.90, "BALLISTIC COEFF", transform=bc_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         # BC Value
         ax_bc_val = fig.add_axes([0.30, 0.15, 0.26, 0.23])
         ax_bc_val.set_axis_off()
         self._widget_refs["bc_ax"] = ax_bc_val
 
-        # Buttons Row (Save / Run)
+        # Buttons Row (Save / Run) — inside BC panel
         if interactive:
             # Save
-            ax_save = fig.add_axes([0.31, 0.09, 0.11, 0.05])
+            ax_save = fig.add_axes([0.31, 0.09, 0.11, 0.045])
             btn_save = Button(ax_save, "Save", color=BG_INPUT, hovercolor=ACCENT_GO)
             btn_save.label.set_color(TEXT_PRIMARY); btn_save.label.set_fontsize(8)
             btn_save.on_clicked(lambda ev: self._save_config())
             
             # Run Sim
-            ax_run = fig.add_axes([0.43, 0.09, 0.12, 0.05])
+            ax_run = fig.add_axes([0.43, 0.09, 0.12, 0.045])
             col_run = "#005500" if run_simulation_callback else "#333333"
             btn_run = Button(ax_run, "RUN SIM", color=col_run, hovercolor=ACCENT_GO)
             btn_run.label.set_color("white"); btn_run.label.set_fontsize(8); btn_run.label.set_weight("bold")
@@ -796,9 +804,9 @@ class PayloadLibraryTab:
         if has_sel:
             self._rebuild_geometry_ui(fig)
         else:
-            ax_ph = fig.add_axes([0.60, 0.5, 0.36, 0.1])
+            ax_ph = fig.add_axes([0.60, 0.45, 0.36, 0.1])
             ax_ph.set_axis_off()
-            ax_ph.text(0.5, 0.5, "Select a payload identity to configure.", ha="center", color="gray")
+            ax_ph.text(0.5, 0.5, "Select a payload identity to configure.", ha="center", color="gray", fontsize=9)
             self._geom_axes.append(ax_ph)
 
 # Global singleton instance for backward compatibility with `render` shim
