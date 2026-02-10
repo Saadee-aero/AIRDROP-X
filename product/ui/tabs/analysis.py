@@ -9,50 +9,51 @@ import matplotlib.patches as mpatches
 
 from product.ui import plots
 
-_BG = "#0a0c0a"
-_PANEL = "#0f120f"
-_LABEL = "#6b8e6b"
-_TEXT = "#c0d0c0"
-_BORDER = "#2a3a2a"
-_PLACEHOLDER = "#4a5a4a"
+# Import unified military-grade theme
+from product.ui.ui_theme import (
+    BG_MAIN, BG_PANEL,
+    TEXT_PRIMARY, TEXT_LABEL,
+    BORDER_SUBTLE,
+    FONT_FAMILY, FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION
+)
 
 
 def _placeholder_panel(ax, title, message="No sweep data available"):
     """Subdued placeholder when precomputed curve is not provided."""
     ax.set_axis_off()
-    ax.set_facecolor(_PANEL)
+    ax.set_facecolor(BG_PANEL)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.add_patch(mpatches.Rectangle((0.02, 0.02), 0.96, 0.96, linewidth=1,
-                edgecolor=_BORDER, facecolor="none", transform=ax.transAxes))
+                edgecolor=BORDER_SUBTLE, facecolor="none", transform=ax.transAxes))
     ax.text(0.5, 0.6, title, transform=ax.transAxes, fontsize=10,
-            color=_LABEL, ha="center", va="center", family="monospace")
+            color=TEXT_LABEL, ha="center", va="center", family="monospace")
     ax.text(0.5, 0.4, message, transform=ax.transAxes, fontsize=8,
-            color=_PLACEHOLDER, ha="center", va="center", family="monospace")
+            color=TEXT_LABEL, ha="center", va="center", family="monospace")
 
 
 def _cep_summary_panel(ax, cep50, target_hit_percentage):
     """Read-only CEP and hit probability summary."""
     ax.set_axis_off()
-    ax.set_facecolor(_PANEL)
+    ax.set_facecolor(BG_PANEL)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.add_patch(mpatches.Rectangle((0.02, 0.02), 0.96, 0.96, linewidth=1,
-                edgecolor=_BORDER, facecolor="none", transform=ax.transAxes))
+                edgecolor=BORDER_SUBTLE, facecolor="none", transform=ax.transAxes))
     ax.text(0.5, 0.88, "CEP SUMMARY", transform=ax.transAxes, fontsize=10,
-            color=_LABEL, ha="center", va="top", family="monospace")
+            color=TEXT_LABEL, ha="center", va="top", family="monospace")
     y = 0.68
     dy = 0.14
     if cep50 is not None:
-        ax.text(0.1, y, "CEP50", transform=ax.transAxes, fontsize=9, color=_LABEL, va="center", family="monospace")
-        ax.text(0.9, y, f"{float(cep50):.2f} m", transform=ax.transAxes, fontsize=9, color=_TEXT, ha="right", va="center", family="monospace")
+        ax.text(0.1, y, "CEP50", transform=ax.transAxes, fontsize=9, color=TEXT_LABEL, va="center", family="monospace")
+        ax.text(0.9, y, f"{float(cep50):.2f} m", transform=ax.transAxes, fontsize=9, color=TEXT_PRIMARY, ha="right", va="center", family="monospace")
         y -= dy
     if target_hit_percentage is not None:
-        ax.text(0.1, y, "Hit %", transform=ax.transAxes, fontsize=9, color=_LABEL, va="center", family="monospace")
-        ax.text(0.9, y, f"{float(target_hit_percentage):.1f}%", transform=ax.transAxes, fontsize=9, color=_TEXT, ha="right", va="center", family="monospace")
+        ax.text(0.1, y, "Hit %", transform=ax.transAxes, fontsize=9, color=TEXT_LABEL, va="center", family="monospace")
+        ax.text(0.9, y, f"{float(target_hit_percentage):.1f}%", transform=ax.transAxes, fontsize=9, color=TEXT_PRIMARY, ha="right", va="center", family="monospace")
         y -= dy
     ax.text(0.5, 0.22, "Read-only · No recomputation", transform=ax.transAxes, fontsize=7,
-            color=_PLACEHOLDER, ha="center", va="center", family="monospace")
+            color=TEXT_LABEL, ha="center", va="center", family="monospace")
 
 
 def render(
@@ -72,7 +73,7 @@ def render(
     - prob_vs_wind_uncertainty: (x_values, y_values) for P_hit vs wind uncertainty
     """
     ax.set_axis_off()
-    ax.set_facecolor(_BG)
+    ax.set_facecolor(BG_MAIN)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
@@ -114,7 +115,7 @@ def render(
         plots.plot_impact_dispersion(
             ax_tr, impact_points, target_position, target_radius or 0, cep50
         )
-        ax_tr.set_title("Impact dispersion", color=_LABEL, fontsize=9, family="monospace")
+        ax_tr.set_title("Impact dispersion", color=TEXT_LABEL, fontsize=9, family="monospace")
     else:
         _placeholder_panel(ax_tr, "Impact dispersion", "No impact data")
 

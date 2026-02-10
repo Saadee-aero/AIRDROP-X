@@ -5,16 +5,18 @@ No engine or mission logic. For transparency, traceability, and auditability.
 
 import matplotlib.patches as mpatches
 
-_BG = "#0a0c0a"
-_PANEL = "#0f120f"
-_LABEL = "#6b8e6b"
-_TEXT = "#c0d0c0"
-_BORDER = "#2a3a2a"
-_ACCENT = "#00ff41"
-_WARN = "#e6b800"
+# Import unified military-grade theme
+from product.ui.ui_theme import (
+    BG_MAIN, BG_PANEL,
+    TEXT_PRIMARY, TEXT_LABEL,
+    ACCENT_GO, ACCENT_WARN,
+    BORDER_SUBTLE,
+    FONT_FAMILY, FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION
+)
+from typing import Any, Dict, List, Optional
 
 
-def _defaults():
+def _defaults() -> Dict[str, Any]:
     """Default display values when not passed from layout."""
     return {
         "system_name": "AIRDROP-X",
@@ -38,7 +40,7 @@ def _defaults():
     }
 
 
-def _fmt(v):
+def _fmt(v: Any) -> str:
     if v is None:
         return "—"
     return str(v)
@@ -53,7 +55,7 @@ def render(ax, **kwargs):
     d.update({k: v for k, v in kwargs.items() if k in d})
 
     ax.set_axis_off()
-    ax.set_facecolor(_BG)
+    ax.set_facecolor(BG_MAIN)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
@@ -67,19 +69,19 @@ def render(ax, **kwargs):
     def section(title, y_curr, content_lines, line_height=0.12, title_color=None):
         box = ax.inset_axes([panel_left, y_curr - row_h, panel_width, row_h])
         box.set_axis_off()
-        box.set_facecolor(_PANEL)
+        box.set_facecolor(BG_PANEL)
         box.set_xlim(0, 1)
         box.set_ylim(0, 1)
         box.add_patch(mpatches.Rectangle((0.02, 0.02), 0.96, 0.96, linewidth=1,
-                    edgecolor=_BORDER, facecolor="none", transform=box.transAxes))
+                    edgecolor=BORDER_SUBTLE, facecolor="none", transform=box.transAxes))
         box.text(0.5, 0.96, title, transform=box.transAxes, fontsize=9,
-                 color=title_color or _ACCENT, ha="center", va="top", family="monospace")
+                 color=title_color or ACCENT_GO, ha="center", va="top", family="monospace")
         yy = 0.80
         for line in content_lines:
             if yy < 0.05:
                 break
             box.text(0.04, yy, line[:95], transform=box.transAxes, fontsize=8,
-                     color=_TEXT, va="top", family="monospace")
+                     color=TEXT_PRIMARY, va="top", family="monospace")
             yy -= line_height
         return y_curr - row_h - gap
 
@@ -88,8 +90,8 @@ def render(ax, **kwargs):
     # 1. Engine Identity
     identity_lines = [
         f"{d['system_name']}  ·  v{d['version']}  ·  build {d['build_id']}",
-        "Physics: " + (d["physics_description"] or "—"),
-        "Monte Carlo: " + (d["mc_description"] or "—"),
+        "Physics: " + str(d["physics_description"] or "—"),
+        "Monte Carlo: " + str(d["mc_description"] or "—"),
         "Config source: configs.mission_configs (ASSUMED)",
     ]
     y = section("ENGINE IDENTITY", y, identity_lines, line_height=0.14)
@@ -99,13 +101,13 @@ def render(ax, **kwargs):
     created_str = _fmt(created)
     repro_lines = [
         f"Random seed: {_fmt(d['random_seed'])}   Sample count: {_fmt(d['n_samples'])}   Time step: {_fmt(d['dt'])} s",
-        "Uncertainty: " + (d["uncertainty_model"] or "—"),
+        "Uncertainty: " + str(d["uncertainty_model"] or "—"),
         f"Snapshot created at: {created_str}",
     ]
     y = section("REPRODUCIBILITY", y, repro_lines, line_height=0.14)
 
     # 3. Limitations & Assumptions
-    lim_lines = ["Known modeling limitations (no hiding):"] + [
+    lim_lines: List[str] = ["Known modeling limitations (no hiding):"] + [
         "  · " + item for item in (d.get("limitations") or [])
     ]
     y = section("LIMITATIONS & ASSUMPTIONS", y, lim_lines, line_height=0.11)
@@ -115,4 +117,4 @@ def render(ax, **kwargs):
     if not warnings:
         warnings = ["No active warnings."]
     warn_lines = [("  ⚠ " if i == 0 else "  · ") + w for i, w in enumerate(warnings)]
-    y = section("WARNINGS / STATUS", y, warn_lines, line_height=0.12, title_color=_WARN)
+    y = section("WARNINGS / STATUS", y, warn_lines, line_height=0.12, title_color=ACCENT_WARN)

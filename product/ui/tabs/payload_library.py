@@ -7,15 +7,17 @@ Strictly static data. No physics computation.
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button
 import matplotlib.patches as mpatches
+from typing import Any, Dict, List, Optional
 
-# Dark panels, bright text so it's readable
-_BG = "#0c0e0c"
-_PANEL = "#141814"
-_ACCENT = "#00ff41"
-_LABEL = "#90e090"
-_TEXT = "#e0ece0"
-_BORDER = "#3a4a3a"
-_INPUT_BG = "#1c201c"
+# Import unified military-grade theme
+from product.ui.ui_theme import (
+    BG_MAIN, BG_PANEL, BG_INPUT,
+    TEXT_PRIMARY, TEXT_LABEL,
+    ACCENT_GO,
+    BORDER_SUBTLE,
+    FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H3,
+    BUTTON_HOVER
+)
 
 CATEGORIES = [
     "Humanitarian / Relief",
@@ -241,8 +243,8 @@ def _payloads_for_category(cat):
 class PayloadLibraryTab:
     """Refactored PayloadLibraryTab for Dynamic Builder."""
     
-    def __init__(self):
-        self._state = {
+    def __init__(self) -> None:
+        self._state: Dict[str, Any] = {
             "selected_index": -1,
             "mass": None,
             "geometry_type": None, # "sphere", "cylinder", "box", etc.
@@ -251,7 +253,7 @@ class PayloadLibraryTab:
             "calculated_area": None,
             "cd_uncertainty": None,
         }
-        self._widget_refs = {
+        self._widget_refs: Dict[str, Any] = {
             "fig": None, 
             "mass_tb": None, 
             "cd_tb": None,
@@ -298,7 +300,7 @@ class PayloadLibraryTab:
         
         if g_type and dims:
             try:
-                d = {k: float(v) for k, v in dims.items() if v}
+                d: Dict[str, float] = {k: float(v) for k, v in dims.items() if v}
                 if g_type == "sphere":
                     r = d.get("radius")
                     if r: 
@@ -324,7 +326,7 @@ class PayloadLibraryTab:
                     if r and l:
                         area = 3.14159 * r**2 
                         vol = (1/3) * 3.14159 * r**2 * l # Cone approx
-            except: pass
+            except Exception: pass
             
         density = (m / vol) if (m and vol) else None
         return area, vol, density
@@ -364,13 +366,13 @@ class PayloadLibraryTab:
         
         # Check if exists, update or append
         existing = next((i for i, d in enumerate(data) if d.get("name") == cfg["name"]), None)
-        if existing is not None: data[existing] = cfg
+        if existing is not None: data[existing] = cfg  # type: ignore[index]
         else: data.append(cfg)
         
         with open(fname, "w") as f: json.dump(data, f, indent=2)
         print(f"Saved payload: {cfg['name']}")
 
-    def get_payload_config(self):
+    def get_payload_config(self) -> Dict[str, Any]:
         m = self._state["mass"]
         a = self._state["calculated_area"]
         cd = self._state["drag_coefficient"]
@@ -384,7 +386,7 @@ class PayloadLibraryTab:
         # Construct Geometry Dict for Validation
         g_type = self._state["geometry_type"]
         dims_map = self._state["dims"]
-        geometry_data = {"type": g_type, "dimensions": {}}
+        geometry_data: Dict[str, Any] = {"type": g_type, "dimensions": {}}
         
         # Map flat UI dims back to validation schema (radius -> diameter, etc)
         # Validation expects: diameter_m, length_m, width_m, height_m
@@ -453,7 +455,7 @@ class PayloadLibraryTab:
         if ax is not None:
             for t in list(ax.texts): t.remove()
             val = f"{bc:.2f}" if bc is not None else "—"
-            ax.text(0.5, 0.5, val, transform=ax.transAxes, ha="center", va="center", fontsize=14, color=_ACCENT, family="monospace", weight='bold')
+            ax.text(0.5, 0.5, val, transform=ax.transAxes, ha="center", va="center", fontsize=14, color=ACCENT_GO, family="monospace", weight='bold')
 
     def _clear_all_choice_buttons(self, fig):
         for a in self._payload_axes + self._category_axes:
@@ -482,12 +484,12 @@ class PayloadLibraryTab:
         for i, cat in enumerate(CATEGORIES):
             bottom = y - 0.052
             ax_c = fig.add_axes([0.08, bottom, 0.22, 0.052])
-            ax_c.set_facecolor(_PANEL)
-            for s in ax_c.spines.values(): s.set_color(_ACCENT)
+            ax_c.set_facecolor(BG_PANEL)
+            for s in ax_c.spines.values(): s.set_color(ACCENT_GO)
             is_exp = expanded_idx == i
             cat_label = "  " + cat.split(" / ")[0] + (" \u25BC" if is_exp else " \u25B6") + "  "
-            b = Button(ax_c, cat_label, color=_PANEL, hovercolor=_INPUT_BG)
-            b.label.set_color(_TEXT); b.label.set_fontsize(8); b.label.set_fontfamily("monospace")
+            b = Button(ax_c, cat_label, color=BG_PANEL, hovercolor=BG_INPUT)
+            b.label.set_color(TEXT_PRIMARY); b.label.set_fontsize(8); b.label.set_fontfamily("monospace")
             self._category_axes.append(ax_c); self._category_buttons.append(b)
             
             def _c_cb(c_l, c_i):
@@ -503,11 +505,11 @@ class PayloadLibraryTab:
                     y -= 0.002
                     p_bottom = y - 0.036
                     ax_p = fig.add_axes([0.08 + 0.018, p_bottom, 0.202, 0.036])
-                    ax_p.set_facecolor(_INPUT_BG)
-                    for s in ax_p.spines.values(): s.set_color(_BORDER)
+                    ax_p.set_facecolor(BG_INPUT)
+                    for s in ax_p.spines.values(): s.set_color(BORDER_SUBTLE)
                     lbl = pname[:18] + "..." if len(pname)>18 else pname
-                    bp = Button(ax_p, "  " + lbl + "  ", color=_INPUT_BG, hovercolor=_PANEL)
-                    bp.label.set_color(_TEXT); bp.label.set_fontsize(7); bp.label.set_fontfamily("monospace")
+                    bp = Button(ax_p, "  " + lbl + "  ", color=BG_INPUT, hovercolor=BG_PANEL)
+                    bp.label.set_color(TEXT_PRIMARY); bp.label.set_fontsize(7); bp.label.set_fontfamily("monospace")
                     self._payload_axes.append(ax_p); self._payload_buttons.append(bp)
                     
                     def _p_cb(ix):
@@ -556,14 +558,14 @@ class PayloadLibraryTab:
         y_cursor = panel_y + panel_h - 0.12
         ax_lbl = fig.add_axes([panel_x + 0.02, y_cursor, 0.12, 0.04])
         ax_lbl.set_axis_off()
-        ax_lbl.text(0, 0.5, "Mass (kg):", va="center", color=_TEXT, fontsize=9)
+        ax_lbl.text(0, 0.5, "Mass (kg):", va="center", color=TEXT_PRIMARY, fontsize=9)
         self._geom_axes.append(ax_lbl)
         
         ax_mass = fig.add_axes([panel_x + 0.15, y_cursor, 0.15, 0.04])
-        ax_mass.set_facecolor(_INPUT_BG)
-        for s in ax_mass.spines.values(): s.set_color(_ACCENT)
+        ax_mass.set_facecolor(BG_INPUT)
+        for s in ax_mass.spines.values(): s.set_color(ACCENT_GO)
         tb_mass = TextBox(ax_mass, "", initial=str(self._state["mass"]) if self._state["mass"] is not None else "", textalignment="center")
-        tb_mass.label.set_color(_TEXT)
+        tb_mass.label.set_color(TEXT_PRIMARY)
         def _on_mass(v):
             try: self._state["mass"] = float(v); self._update_calculations()
             except: pass
@@ -575,7 +577,7 @@ class PayloadLibraryTab:
         y_cursor -= 0.06
         ax_lbl2 = fig.add_axes([panel_x + 0.02, y_cursor, 0.12, 0.04])
         ax_lbl2.set_axis_off()
-        ax_lbl2.text(0, 0.5, "Shape:", va="center", color=_TEXT, fontsize=9)
+        ax_lbl2.text(0, 0.5, "Shape:", va="center", color=TEXT_PRIMARY, fontsize=9)
         self._geom_axes.append(ax_lbl2)
         
         shapes = ["sphere", "cylinder", "box", "capsule", "blunt_cone"]
@@ -592,10 +594,10 @@ class PayloadLibraryTab:
             
             ax_s = fig.add_axes([sx, sy, grid_w, grid_h])
             is_sel = curr_shape == sh
-            c = _ACCENT if is_sel else _INPUT_BG
-            bs = Button(ax_s, sh[:4].capitalize(), color=c, hovercolor=_ACCENT)
+            c = ACCENT_GO if is_sel else BG_INPUT
+            bs = Button(ax_s, sh[:4].capitalize(), color=c, hovercolor=ACCENT_GO)
             bs.label.set_fontsize(7)
-            bs.label.set_color("black" if is_sel else _TEXT)
+            bs.label.set_color("black" if is_sel else TEXT_PRIMARY)
             
             def _mk_sh(s):
                 def _h(ev):
@@ -616,7 +618,7 @@ class PayloadLibraryTab:
         if curr_shape:
             ax_lbl3 = fig.add_axes([panel_x + 0.02, y_cursor, 0.30, 0.04])
             ax_lbl3.set_axis_off()
-            ax_lbl3.text(0, 0.5, f"Dimensions ({curr_shape}):", va="center", color=_TEXT, fontsize=9)
+            ax_lbl3.text(0, 0.5, f"Dimensions ({curr_shape}):", va="center", color=TEXT_PRIMARY, fontsize=9)
             self._geom_axes.append(ax_lbl3)
             
             req_dims = []
@@ -629,17 +631,17 @@ class PayloadLibraryTab:
                 dy = y_dim - k*0.05
                 ax_d_lbl = fig.add_axes([panel_x + 0.04, dy, 0.08, 0.035])
                 ax_d_lbl.set_axis_off()
-                ax_d_lbl.text(1, 0.5, f"{dim_name.title()}: ", ha="right", va="center", color=_TEXT, fontsize=8)
+                ax_d_lbl.text(1, 0.5, f"{dim_name.title()}: ", ha="right", va="center", color=TEXT_PRIMARY, fontsize=8)
                 self._geom_axes.append(ax_d_lbl)
                 
                 ax_d = fig.add_axes([panel_x + 0.13, dy, 0.12, 0.035])
-                ax_d.set_facecolor(_INPUT_BG)
-                for s in ax_d.spines.values(): s.set_color(_BORDER)
+                ax_d.set_facecolor(BG_INPUT)
+                for s in ax_d.spines.values(): s.set_color(BORDER_SUBTLE)
                 
                 # Get current value (allow string input handling?)
                 val = self._state["dims"].get(dim_name, "")
                 tb_d = TextBox(ax_d, "", initial=str(val), textalignment="center")
-                tb_d.label.set_color(_TEXT)
+                tb_d.label.set_color(TEXT_PRIMARY)
                 
                 def _mk_dim(dn):
                     def _h(v):
@@ -660,7 +662,7 @@ class PayloadLibraryTab:
         ax_area.set_axis_off()
         val_area = self._state["calculated_area"]
         txt = f"Ref Area: {val_area:.4f} m²" if val_area else "Ref Area: —"
-        ax_area.text(0, 0.5, txt, va="center", color=_ACCENT, fontsize=9)
+        ax_area.text(0, 0.5, txt, va="center", color=ACCENT_GO, fontsize=9)
         self._widget_refs["calc_area_txt"] = ax_area.texts[0]
         self._geom_axes.append(ax_area)
         
@@ -668,12 +670,12 @@ class PayloadLibraryTab:
         y_cursor -= 0.05
         ax_cd_lbl = fig.add_axes([panel_x + 0.02, y_cursor, 0.08, 0.04])
         ax_cd_lbl.set_axis_off()
-        ax_cd_lbl.text(0, 0.5, "Cd:", va="center", color=_TEXT, fontsize=9)
+        ax_cd_lbl.text(0, 0.5, "Cd:", va="center", color=TEXT_PRIMARY, fontsize=9)
         self._geom_axes.append(ax_cd_lbl)
         
         ax_cd = fig.add_axes([panel_x + 0.13, y_cursor, 0.12, 0.04])
-        ax_cd.set_facecolor(_INPUT_BG)
-        for s in ax_cd.spines.values(): s.set_color(_ACCENT)
+        ax_cd.set_facecolor(BG_INPUT)
+        for s in ax_cd.spines.values(): s.set_color(ACCENT_GO)
         tb_cd = TextBox(ax_cd, "", initial=str(self._state["drag_coefficient"] or ""), textalignment="center")
         def _on_cd(v):
             try: self._state["drag_coefficient"] = float(v); self._update_bc_display()
@@ -695,23 +697,23 @@ class PayloadLibraryTab:
 
     def render(self, ax, fig, interactive=True, run_simulation_callback=None):
         ax.set_axis_off()
-        ax.set_facecolor(_BG); fig.patch.set_facecolor(_BG)
+        ax.set_facecolor(BG_MAIN); fig.patch.set_facecolor(BG_MAIN)
         self._widget_refs["fig"] = fig
         
         has_sel = self._state["selected_index"] >= 0
 
         # --- LEFT: Identity ---
         left = ax.inset_axes([0.02, 0.48, 0.26, 0.50])
-        left.set_facecolor(_PANEL); left.set_axis_off()
-        left.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=_BORDER, facecolor="none", transform=left.transAxes))
-        left.text(0.5, 0.96, "STEP 1: IDENTITY", transform=left.transAxes, fontsize=9, color=_LABEL, ha="center")
+        left.set_facecolor(BG_PANEL); left.set_axis_off()
+        left.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=left.transAxes))
+        left.text(0.5, 0.96, "STEP 1: IDENTITY", transform=left.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         # Main Dropdown Button
         btn_ax = fig.add_axes([0.04, 0.75, 0.22, 0.065])
-        btn_ax.set_facecolor(_INPUT_BG)
+        btn_ax.set_facecolor(BG_INPUT)
         curr = _get_archetype(self._state["selected_index"])["name"] if has_sel else "Select Payload..."
-        main_btn = Button(btn_ax, f"  {curr}  \u25BC  ", color=_INPUT_BG, hovercolor=_PANEL)
-        main_btn.label.set_color(_TEXT); main_btn.label.set_fontsize(8)
+        main_btn = Button(btn_ax, f"  {curr}  \u25BC  ", color=BG_INPUT, hovercolor=BG_PANEL)
+        main_btn.label.set_color(TEXT_PRIMARY); main_btn.label.set_fontsize(8)
         
         def _toggle_dd(ev):
             if not interactive: return
@@ -729,17 +731,17 @@ class PayloadLibraryTab:
         # Description Text
         if has_sel:
              p = _get_archetype(self._state["selected_index"])
-             left.text(0.5, 0.50, p["notes"], transform=left.transAxes, ha="center", fontsize=8, color=_TEXT, wrap=True)
+             left.text(0.5, 0.50, p["notes"], transform=left.transAxes, ha="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
 
         # --- CENTER: Info / Warnings ---
         vis = ax.inset_axes([0.30, 0.48, 0.26, 0.50])
-        vis.set_facecolor(_PANEL); vis.set_axis_off()
-        vis.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=_BORDER, facecolor="none", transform=vis.transAxes))
-        vis.text(0.5, 0.96, "ANALYSIS", transform=vis.transAxes, fontsize=9, color=_LABEL, ha="center")
+        vis.set_facecolor(BG_PANEL); vis.set_axis_off()
+        vis.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=vis.transAxes))
+        vis.text(0.5, 0.96, "ANALYSIS", transform=vis.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         if has_sel:
             p = _get_archetype(self._state["selected_index"])
-            vis.text(0.5, 0.85, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=8, color=_TEXT, wrap=True)
+            vis.text(0.5, 0.85, p["description"], transform=vis.transAxes, ha="center", va="center", fontsize=8, color=TEXT_PRIMARY, wrap=True)
             
             # Validation Warnings
             warn_y = 0.60
@@ -754,20 +756,20 @@ class PayloadLibraryTab:
             
             cfg = self.get_payload_config()
             bc = cfg["ballistic_coefficient"]
-            if bc and bc > 1000:
+            if bc is not None and float(bc) > 1000:
                  vis.text(0.5, warn_y, "WARNING: Kinetic Penetrator (BC > 1000)", color="red", ha="center", fontsize=8)
 
         # --- RIGHT: Parameters (Dynamic) ---
         param_bg = ax.inset_axes([0.58, 0.08, 0.40, 0.88])
-        param_bg.set_facecolor(_PANEL); param_bg.set_axis_off()
-        param_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=_BORDER, facecolor="none", transform=param_bg.transAxes))
-        param_bg.text(0.5, 0.96, "STEP 2 & 3: PHYSICS", transform=param_bg.transAxes, fontsize=9, color=_LABEL, ha="center")
+        param_bg.set_facecolor(BG_PANEL); param_bg.set_axis_off()
+        param_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=param_bg.transAxes))
+        param_bg.text(0.5, 0.96, "STEP 2 & 3: PHYSICS", transform=param_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         # BC Box (Persistent)
         bc_bg = ax.inset_axes([0.30, 0.08, 0.26, 0.38]) # Bottom Center
-        bc_bg.set_facecolor(_PANEL); bc_bg.set_axis_off()
-        bc_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=_BORDER, facecolor="none", transform=bc_bg.transAxes))
-        bc_bg.text(0.5, 0.85, "BALLISTIC COEFF", transform=bc_bg.transAxes, fontsize=9, color=_LABEL, ha="center")
+        bc_bg.set_facecolor(BG_PANEL); bc_bg.set_axis_off()
+        bc_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=bc_bg.transAxes))
+        bc_bg.text(0.5, 0.85, "BALLISTIC COEFF", transform=bc_bg.transAxes, fontsize=9, color=TEXT_LABEL, ha="center")
         
         # BC Value
         ax_bc_val = fig.add_axes([0.30, 0.15, 0.26, 0.23])
@@ -778,14 +780,14 @@ class PayloadLibraryTab:
         if interactive:
             # Save
             ax_save = fig.add_axes([0.31, 0.09, 0.11, 0.05])
-            btn_save = Button(ax_save, "Save", color=_INPUT_BG, hovercolor=_ACCENT)
-            btn_save.label.set_color(_TEXT); btn_save.label.set_fontsize(8)
+            btn_save = Button(ax_save, "Save", color=BG_INPUT, hovercolor=ACCENT_GO)
+            btn_save.label.set_color(TEXT_PRIMARY); btn_save.label.set_fontsize(8)
             btn_save.on_clicked(lambda ev: self._save_config())
             
             # Run Sim
             ax_run = fig.add_axes([0.43, 0.09, 0.12, 0.05])
             col_run = "#005500" if run_simulation_callback else "#333333"
-            btn_run = Button(ax_run, "RUN SIM", color=col_run, hovercolor=_ACCENT)
+            btn_run = Button(ax_run, "RUN SIM", color=col_run, hovercolor=ACCENT_GO)
             btn_run.label.set_color("white"); btn_run.label.set_fontsize(8); btn_run.label.set_weight("bold")
             if run_simulation_callback:
                 btn_run.on_clicked(lambda ev: run_simulation_callback(self.get_payload_config()))

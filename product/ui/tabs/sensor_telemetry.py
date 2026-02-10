@@ -5,17 +5,26 @@ No simulation, estimation, or filtering. Military-grade clarity.
 
 import matplotlib.patches as mpatches
 
-# Match mission_overview / payload_library palette
-_BG = "#0a0c0a"
-_PANEL = "#0f120f"
-_ACCENT = "#00ff41"
-_RED = "#ff3333"
-_AMBER = "#e6b800"
-_LABEL = "#6b8e6b"
-_TEXT = "#c0d0c0"
-_BORDER = "#2a3a2a"
-_MEASURED = "#90e090"
-_ESTIMATED = "#b0a060"
+# Import unified military-grade theme
+from product.ui.ui_theme import (
+    BG_MAIN, BG_PANEL,
+    TEXT_PRIMARY, TEXT_LABEL,
+    ACCENT_GO, ACCENT_NO_GO, ACCENT_WARN,
+    BORDER_SUBTLE,
+    FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION
+)
+
+# Legacy aliases for backward compat (mapped to theme)
+_BG = BG_MAIN
+_PANEL = BG_PANEL
+_ACCENT = ACCENT_GO
+_RED = ACCENT_NO_GO
+_AMBER = ACCENT_WARN
+_LABEL = TEXT_LABEL
+_TEXT = TEXT_PRIMARY
+_BORDER = BORDER_SUBTLE
+_MEASURED = TEXT_LABEL  # Light green for measured
+_ESTIMATED = ACCENT_WARN  # Amber for estimated
 
 
 def _default_telemetry():

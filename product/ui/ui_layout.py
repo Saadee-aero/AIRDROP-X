@@ -12,9 +12,11 @@ from .tabs import payload_library
 from .tabs import analysis
 from .tabs import system_status
 
-
-_TAB_BG = "#141814"
-_TAB_TEXT = "#e0ece0"
+# Import unified military-grade theme
+from product.ui.ui_theme import (
+    BG_PANEL, TEXT_PRIMARY, BUTTON_HOVER,
+    TAB_WIDTH, TAB_HEIGHT, TAB_GAP
+)
 
 def _make_tab_buttons(fig, n_tabs, on_tab_click):
     """Create a row of tab button axes; return list of Button widgets."""
@@ -23,10 +25,10 @@ def _make_tab_buttons(fig, n_tabs, on_tab_click):
     buttons = []
     for i in range(n_tabs):
         ax = fig.add_axes([left + i * (width + gap), bottom, width, height])
-        ax.set_facecolor(_TAB_BG)
+        ax.set_facecolor(BG_PANEL)
         ax.set_axis_off()
-        btn = Button(ax, tabs.TABS[i][0], color=_TAB_BG, hovercolor="#1e221e")
-        btn.label.set_color(_TAB_TEXT)
+        btn = Button(ax, tabs.TABS[i][0], color=BG_PANEL, hovercolor=BUTTON_HOVER)
+        btn.label.set_color(TEXT_PRIMARY)
         btn.label.set_fontsize(9)
         btn.on_clicked(lambda event, idx=i: on_tab_click(idx))
         buttons.append(btn)
