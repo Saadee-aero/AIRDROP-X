@@ -18,7 +18,7 @@ from product.ui.ui_theme import (
 )
 
 
-def _placeholder_panel(ax, title, message="No sweep data available"):
+def _placeholder_panel(ax, title, message="Sensitivity sweep not performed.\nUse Opportunity Analysis to generate sweep."):
     """Subdued placeholder when precomputed curve is not provided."""
     ax.set_axis_off()
     ax.set_facecolor(BG_PANEL)

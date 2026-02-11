@@ -35,6 +35,13 @@ def _defaults() -> Dict[str, Any]:
             "Uniform atmosphere (constant rho); no wind shear or gusts.",
             "Wind uncertainty: isotropic Gaussian; no spatial/temporal correlation.",
             "Single release point per run; no multi-drop or sequencing.",
+            "Model Validity Envelope (Confidence > 90%):",
+            "  · Altitude (AGL): 150 ft to 12,000 ft",
+            "  · Release Velocity: 0 to 60 m/s (TAS)",
+            "  · Payload Mass: 1 kg to 500 kg",
+            "  · Descent Rate: < 50 m/s (subsonic)",
+            "Confidence decreases primarily due to environmental uncertainty,",
+            "specifically local wind field variance not captured by single-point sampling.",
         ],
         "warnings": ["No active warnings."],
     }

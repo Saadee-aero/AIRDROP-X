@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from product.ui.ui_theme import (
     BG_MAIN, BG_PANEL, BG_INPUT,
     TEXT_PRIMARY, TEXT_LABEL,
-    ACCENT_GO,
+    ACCENT_GO, ACCENT_WARN,
     BORDER_SUBTLE,
     FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H3,
     BUTTON_HOVER
@@ -251,7 +251,9 @@ class PayloadLibraryTab:
             "dims": {},            # {"radius": 0.1, "length": 0.5, ...}
             "drag_coefficient": None,
             "calculated_area": None,
+            "calculated_area": None,
             "cd_uncertainty": None,
+            "cd_is_manual": False,
         }
         self._widget_refs: Dict[str, Any] = {
             "fig": None, 
@@ -287,6 +289,7 @@ class PayloadLibraryTab:
         self._state["drag_coefficient"] = None
         self._state["calculated_area"] = None
         self._state["cd_uncertainty"] = None
+        self._state["cd_is_manual"] = False
 
 
     def _calculate_derived_physics(self):
@@ -443,6 +446,11 @@ class PayloadLibraryTab:
         # Cd
         tb = self._widget_refs.get("cd_tb")
         if tb: tb.set_val(str(self._state["drag_coefficient"]) if self._state["drag_coefficient"] else "")
+        
+        # Cd Badge
+        badge = self._widget_refs.get("cd_badge")
+        if badge:
+            badge.set_text("User-defined" if self._state.get("cd_is_manual") else "")
 
         # BC
         self._update_bc_display()
@@ -591,6 +599,7 @@ class PayloadLibraryTab:
                     self._state["geometry_type"] = s
                     self._state["dims"] = {}
                     self._state["drag_coefficient"] = None
+                    self._state["cd_is_manual"] = False
                     self._update_calculations()
                     self._rebuild_geometry_ui(fig)
                     fig.canvas.draw()
@@ -668,11 +677,29 @@ class PayloadLibraryTab:
         init_cd = str(self._state["drag_coefficient"]) if self._state["drag_coefficient"] else ""
         tb_cd = TextBox(ax_cd, "", initial=init_cd, textalignment="center")
         def _on_cd(v):
-            try: self._state["drag_coefficient"] = float(v); self._update_bc_display()
+            try: 
+                self._state["drag_coefficient"] = float(v)
+                self._state["cd_is_manual"] = True
+                self._update_bc_display()
+                self._refresh_param_display()
             except Exception: pass
         tb_cd.on_submit(_on_cd)
         self._widget_refs["cd_tb"] = tb_cd
+        self._widget_refs["cd_tb"] = tb_cd
         self._geom_axes.append(ax_cd)
+
+        # Cd Assumption Note
+        ax_note = fig.add_axes([px, y - 0.025, pw, 0.02])
+        ax_note.set_axis_off()
+        ax_note.text(0, 0.5, "Assumed constant Cd (averaged)", va="center", color="gray", fontsize=6, family="monospace")
+        self._geom_axes.append(ax_note)
+        
+        # User Defined Badge (Dynamic)
+        ax_badge = fig.add_axes([px + 0.12, y - 0.025, 0.14, 0.02])
+        ax_badge.set_axis_off()
+        txt_badge = ax_badge.text(0.5, 0.5, "", va="center", ha="center", color=ACCENT_WARN, fontsize=6, family="monospace")
+        self._widget_refs["cd_badge"] = txt_badge
+        self._geom_axes.append(ax_badge)
 
         # Uncertainty
         unc = self._state["cd_uncertainty"]
@@ -778,6 +805,7 @@ class PayloadLibraryTab:
         bc_bg.set_facecolor(BG_PANEL); bc_bg.set_axis_off()
         bc_bg.add_patch(mpatches.Rectangle((0,0),1,1, linewidth=1, edgecolor=BORDER_SUBTLE, facecolor="none", transform=bc_bg.transAxes))
         bc_bg.text(0.5, 0.92, "BALLISTIC COEFF", transform=bc_bg.transAxes, fontsize=8, color=TEXT_LABEL, ha="center", family="monospace")
+        bc_bg.text(0.5, 0.82, r"$BC = \frac{m}{C_d \cdot A}$", transform=bc_bg.transAxes, fontsize=10, color=TEXT_PRIMARY, ha="center", family="monospace")
         
         # BC Value axis
         ax_bc_val = fig.add_axes([0.32, 0.22, 0.22, 0.18])

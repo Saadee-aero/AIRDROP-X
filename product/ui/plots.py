@@ -46,24 +46,27 @@ def plot_impact_dispersion(
             plt.Circle(target_position, cep50, color=_CEP_RING, fill=False, linestyle="--", linewidth=1, clip_on=True)
         )
 
-    x_min = min(impact_points[:, 0].min(), target_position[0] - r_max)
-    x_max = max(impact_points[:, 0].max(), target_position[0] + r_max)
-    y_min = min(impact_points[:, 1].min(), target_position[1] - r_max)
-    y_max = max(impact_points[:, 1].max(), target_position[1] + r_max)
-    dx = max(x_max - x_min, 1e-6)
-    dy = max(y_max - y_min, 1e-6)
-    margin = 0.08 * max(dx, dy)
-    half = max(dx, dy) * 0.5 + margin
-    cx = (x_min + x_max) * 0.5
-    cy = (y_min + y_max) * 0.5
-    ax.set_xlim(cx - half, cx + half)
-    ax.set_ylim(cy - half, cy + half)
+    # Symmetric scaling centered on target
+    if impact_points.size > 0:
+        max_dist = np.max(np.linalg.norm(impact_points - target_position, axis=1))
+        view_rad = max(max_dist * 1.1, r_target * 2.0, 20.0)
+    else:
+        view_rad = 50.0
+
+    ax.set_xlim(target_position[0] - view_rad, target_position[0] + view_rad)
+    ax.set_ylim(target_position[1] - view_rad, target_position[1] + view_rad)
 
     ax.set_xlabel("X (m)", labelpad=0)
     ax.set_ylabel("Y (m)", labelpad=0)
     ax.tick_params(axis="both", pad=2)
     ax.axis("equal")
     ax.grid(True, color=_GRID, alpha=0.6, linestyle="-")
+
+    # Legend
+    ax.legend(["Impacts", "Target", "Center", "CEP50"], loc="upper left", frameon=True, fontsize=8, facecolor=_PANEL, edgecolor=_BORDER, labelcolor=_LABEL)
+    
+    # Model Annotation
+    ax.text(0.98, 0.02, "Model: Low-subsonic, drag-dominated free fall", transform=ax.transAxes, ha="right", fontsize=6, color=_LABEL, family="monospace")
 
 
 def plot_sensitivity(ax, x_values, y_values, x_label, y_label, title=None):

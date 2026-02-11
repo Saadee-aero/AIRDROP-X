@@ -30,11 +30,11 @@ _ESTIMATED = ACCENT_WARN  # Amber for estimated
 def _default_telemetry():
     """Display-only default data. Replace with passed dict when wired from engine."""
     return {
-        "gnss_lat": None,
-        "gnss_lon": None,
-        "gnss_speed_ms": None,
-        "gnss_heading_deg": None,
-        "gnss_altitude_m": None,
+        "gnss_lat": "Awaiting telemetry input",
+        "gnss_lon": "Awaiting telemetry input",
+        "gnss_speed_ms": "Awaiting telemetry input",
+        "gnss_heading_deg": "Awaiting telemetry input",
+        "gnss_altitude_m": "Awaiting telemetry input",
         "gnss_fix": "No Fix",
         "gnss_freshness_s": None,
         "roll_deg": None,
@@ -42,8 +42,8 @@ def _default_telemetry():
         "yaw_deg": None,
         "accel_mag_ms2": None,
         "imu_health": "—",
-        "wind_dir_deg": None,
-        "wind_speed_ms": None,
+        "wind_dir_deg": "Awaiting telemetry input",
+        "wind_speed_ms": "Awaiting telemetry input",
         "wind_uncertainty": None,
         "wind_source": "—",
         "wind_confidence": "—",
@@ -84,6 +84,10 @@ def render(ax, **kwargs):
     ax.set_facecolor(_BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
+
+    # Snapshot Mode Badge
+    ax.text(0.98, 0.98, "SNAPSHOT MODE – NOT LIVE FEED", transform=ax.transAxes, 
+            ha="right", va="top", fontsize=8, color=ACCENT_WARN, family="monospace", weight="bold")
 
     # Panel layout: three columns
     # Left: Navigation State (Measured)

@@ -72,6 +72,7 @@ def launch_unified_ui(
         "impact_points": impact_points,
         "target_position": target_position,
         "target_radius": target_radius,
+        "advisory_result": advisory_result,
     }
 
     def show_tab(index):
