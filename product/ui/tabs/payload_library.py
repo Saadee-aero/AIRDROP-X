@@ -685,7 +685,6 @@ class PayloadLibraryTab:
             except Exception: pass
         tb_cd.on_submit(_on_cd)
         self._widget_refs["cd_tb"] = tb_cd
-        self._widget_refs["cd_tb"] = tb_cd
         self._geom_axes.append(ax_cd)
 
         # Cd Assumption Note
