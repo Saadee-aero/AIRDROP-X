@@ -6,6 +6,7 @@ Receives precomputed data only; no computation.
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 
 # Import unified military-grade theme
 from product.ui.ui_theme import (
@@ -46,7 +47,8 @@ def render(
         threshold,
         mode,
         advisory_result,
-        len(impact_points) if impact_points is not None else 0
+        len(impact_points) if impact_points is not None else 0,
+        kwargs.get("confidence_index"),
     )
 
     # Right: target / crosshair view
@@ -57,10 +59,22 @@ def render(
         target_position,
         target_radius,
         cep50,
+        kwargs.get("release_point"),
+        kwargs.get("wind_vector"),
     )
 
 
-def _draw_banner_metrics_advisory(ax, decision, target_hit_percentage, cep50, threshold, mode, advisory, n_samples):
+def _draw_banner_metrics_advisory(
+    ax,
+    decision,
+    target_hit_percentage,
+    cep50,
+    threshold,
+    mode,
+    advisory,
+    n_samples,
+    confidence_index=None,
+):
     ax.set_axis_off()
     ax.set_facecolor(BG_PANEL)
     ax.set_xlim(0, 1)
@@ -80,13 +94,17 @@ def _draw_banner_metrics_advisory(ax, decision, target_hit_percentage, cep50, th
     ax.text(0.5, 0.89, label, transform=ax.transAxes, fontsize=24, fontweight="bold",
             color=color, ha="center", va="center", family="monospace")
             
-    # Confidence
+    # Confidence index
     phit = float(target_hit_percentage) / 100.0
-    if phit > 0.8: conf = "High"
-    elif phit >= 0.6: conf = "Moderate"
-    else: conf = "Low"
-    
-    ax.text(0.5, 0.82, f"Confidence: {conf}", transform=ax.transAxes, fontsize=10, 
+    ci = float(confidence_index) if confidence_index is not None else 0.5
+    if ci >= 0.75:
+        ci_label = "High"
+    elif ci >= 0.50:
+        ci_label = "Moderate"
+    else:
+        ci_label = "Low"
+
+    ax.text(0.5, 0.82, f"Confidence Index: {ci:.2f} ({ci_label})", transform=ax.transAxes, fontsize=10, 
             color=TEXT_PRIMARY, ha="center", va="center", family="monospace", weight="bold")
 
     # Stats line inside banner
@@ -145,7 +163,7 @@ def _draw_banner_metrics_advisory(ax, decision, target_hit_percentage, cep50, th
         ax.text(0.94, y, analytic_msg, transform=ax.transAxes, fontsize=8, color=TEXT_PRIMARY, ha="right", va="top", family="monospace", wrap=True)
 
 
-def _draw_target_view(ax, impact_points, target_position, target_radius, cep50):
+def _draw_target_view(ax, impact_points, target_position, target_radius, cep50, release_point=None, wind_vector=None):
     impact_points = np.asarray(impact_points, dtype=float)
     target_position = np.asarray(target_position, dtype=float).reshape(2)
 
@@ -162,6 +180,9 @@ def _draw_target_view(ax, impact_points, target_position, target_radius, cep50):
         ax.scatter(impact_points[:, 0], impact_points[:, 1], color=SCATTER_PRIMARY, alpha=0.35, s=8, edgecolors="none")
         mean_impact = np.mean(impact_points, axis=0)
         ax.scatter(mean_impact[0], mean_impact[1], color=MEAN_MARKER, s=50, zorder=5, marker="x", linewidths=1.5)
+    if release_point is not None:
+        rp = np.asarray(release_point, dtype=float).reshape(2)
+        ax.scatter(rp[0], rp[1], color=ACCENT_WARN, s=55, marker="D", zorder=5)
 
     # Target
     ax.add_patch(plt.Circle(target_position, target_radius, color=ACCENT_GO, fill=False, linewidth=1.5))
@@ -169,6 +190,22 @@ def _draw_target_view(ax, impact_points, target_position, target_radius, cep50):
 
     if cep50 is not None and cep50 > 0:
         ax.add_patch(plt.Circle(target_position, cep50, color=CEP_CIRCLE, fill=False, linestyle="--", linewidth=1))
+    if wind_vector is not None:
+        wind = np.asarray(wind_vector, dtype=float).reshape(2)
+        if float(np.linalg.norm(wind)) > 0:
+            start = np.asarray(target_position, dtype=float).reshape(2)
+            vec = wind * 6.0
+            ax.arrow(
+                start[0],
+                start[1],
+                vec[0],
+                vec[1],
+                width=0.18,
+                head_width=0.9,
+                head_length=1.3,
+                color=ACCENT_WARN,
+                length_includes_head=True,
+            )
 
     # Crosshair
     cx, cy = float(target_position[0]), float(target_position[1])
@@ -177,7 +214,28 @@ def _draw_target_view(ax, impact_points, target_position, target_radius, cep50):
 
     # Annotations
     ax.text(0.02, 0.98, "IMPACT DISPERSION", transform=ax.transAxes, ha="left", va="top", color=TEXT_LABEL, fontsize=10, family="monospace")
-    ax.text(0.98, 0.02, "Model: Low-subsonic", transform=ax.transAxes, ha="right", va="bottom", color=TEXT_LABEL, fontsize=7, family="monospace")
+    ax.text(0.98, 0.02, "Model: Low-subsonic, drag-dominated free fall", transform=ax.transAxes, ha="right", va="bottom", color=TEXT_LABEL, fontsize=7, family="monospace")
+
+    handles = [
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=SCATTER_PRIMARY, markeredgecolor="none", markersize=6, label="Impacts"),
+        Line2D([0], [0], marker="x", color=MEAN_MARKER, markersize=8, label="Mean"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=ACCENT_GO, markeredgecolor=ACCENT_GO, markersize=6, label="Target"),
+        Line2D([0], [0], linestyle="--", color=CEP_CIRCLE, label="CEP50"),
+        Line2D([0], [0], color=ACCENT_WARN, linewidth=2, label="Wind"),
+    ]
+    if release_point is not None:
+        handles.append(
+            Line2D([0], [0], marker="D", color="none", markerfacecolor=ACCENT_WARN, markeredgecolor=ACCENT_WARN, markersize=6, label="Release")
+        )
+    ax.legend(
+        handles=handles,
+        loc="upper left",
+        frameon=True,
+        fontsize=7,
+        facecolor=BG_PANEL,
+        edgecolor=BORDER_SUBTLE,
+        labelcolor=TEXT_LABEL,
+    )
 
     # Symmetric limit logic (replicated from plots.py for consistency if this standalone view is used)
     # Actually, let's reuse logic:

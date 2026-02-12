@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from configs import mission_configs as cfg
 from src import decision_logic
+from src import metrics
 from product.payloads.payload_base import Payload
 from product.missions.target_manager import Target
 from product.missions.environment import Environment
@@ -88,7 +89,7 @@ def run_simulation_from_config(
         uav_velocity=uav_vel,
     )
     # Engine call: Monte Carlo and metrics.
-    impact_points, P_hit, cep50 = get_impact_points_and_metrics(
+    impact_points, P_hit, cep50, impact_velocity_stats = get_impact_points_and_metrics(
         mission_state,
         random_seed,
     )
@@ -96,6 +97,17 @@ def run_simulation_from_config(
         mission_state,
         cfg.THRESHOLD_SLIDER_INIT / 100.0,
         random_seed=random_seed,
+    )
+    m = mission_state.payload.mass
+    cd = mission_state.payload.drag_coefficient
+    area = mission_state.payload.reference_area
+    bc = (m / (cd * area)) if (cd and area) else None
+    telemetry_freshness = 0.0 if telemetry_frame is not None else None
+    confidence_index = metrics.compute_confidence_index(
+        wind_std=cfg.wind_std,
+        ballistic_coefficient=bc,
+        altitude=uav_pos[2],
+        telemetry_freshness=telemetry_freshness,
     )
 
     # Immutable snapshot: config + results + timestamp.
@@ -120,10 +132,13 @@ def run_simulation_from_config(
         "impact_points": impact_points,
         "P_hit": P_hit,
         "cep50": cep50,
+        "impact_velocity_stats": impact_velocity_stats,
+        "max_safe_impact_speed": None,
         "target_position": mission_state.target.position,
         "target_radius": mission_state.target.radius,
         "mission_state": mission_state,
         "advisory_result": advisory_result,
+        "confidence_index": confidence_index,
         "initial_threshold_percent": cfg.THRESHOLD_SLIDER_INIT,
         "initial_mode": "Balanced",
         "slider_min": cfg.THRESHOLD_SLIDER_MIN,
@@ -309,6 +324,9 @@ class AirdropMainWindow(QMainWindow):
             "impact_points": self._results["impact_points"],
             "target_position": self._results["target_position"],
             "target_radius": self._results["target_radius"],
+            "confidence_index": self._results.get("confidence_index"),
+            "release_point": self._results["mission_state"].uav_position[:2] if self._results.get("mission_state") else None,
+            "wind_vector": self._cfg.get("wind_mean", (0.0, 0.0))[:2],
         }
         qt_bridge.render_into_single_axes(fig, mission_overview.render, **mission_data)
         return self._wrap_canvas(fig)
@@ -329,7 +347,13 @@ class AirdropMainWindow(QMainWindow):
 
     def _make_sensor_tab(self) -> QWidget:
         fig = qt_bridge.create_figure()
-        qt_bridge.render_into_single_axes(fig, sensor_telemetry.render)
+        qt_bridge.render_into_single_axes(
+            fig,
+            sensor_telemetry.render,
+            wind_mean_ms=float(self._cfg.get("wind_mean", (0.0, 0.0, 0.0))[0]),
+            wind_std_dev_ms=self._cfg.get("wind_std"),
+            telemetry_live=False,
+        )
         return self._wrap_canvas(fig)
 
     def _make_analysis_tab(self) -> QWidget:
@@ -338,8 +362,12 @@ class AirdropMainWindow(QMainWindow):
             "impact_points": self._results["impact_points"],
             "target_position": self._results["target_position"],
             "target_radius": self._results["target_radius"],
+            "uav_position": self._results["mission_state"].uav_position if self._results.get("mission_state") else None,
+            "wind_mean": self._cfg.get("wind_mean"),
             "cep50": self._results["cep50"],
             "target_hit_percentage": self._results["P_hit"] * 100.0,
+            "impact_velocity_stats": self._results.get("impact_velocity_stats"),
+            "max_safe_impact_speed": self._results.get("max_safe_impact_speed"),
         }
         qt_bridge.render_into_single_axes(fig, analysis.render, **analysis_kwargs)
         return self._wrap_canvas(fig)

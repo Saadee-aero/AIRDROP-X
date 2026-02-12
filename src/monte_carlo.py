@@ -15,6 +15,19 @@ def _impact_xy(trajectory):
     return trajectory[-1, :2].copy()
 
 
+def _impact_speed(trajectory, dt, pos0, vel0):
+    """
+    Compute impact velocity magnitude from trajectory (post-processing only).
+    Does not modify integration. Uses v = (pos[-1] - pos[-2]) / dt when len>=2.
+    """
+    if trajectory.shape[0] == 0:
+        return float(np.linalg.norm(vel0))
+    if trajectory.shape[0] >= 2:
+        disp = trajectory[-1] - trajectory[-2]
+        return float(np.linalg.norm(disp / dt))
+    return float(np.linalg.norm(vel0))
+
+
 def run_monte_carlo(
     pos0,
     vel0,
@@ -28,10 +41,12 @@ def run_monte_carlo(
     random_seed,
     dt=0.01,
     return_trajectories=False,
+    return_impact_speeds=False,
 ):
     """
     Monte Carlo uncertainty propagation. One wind sample per trajectory.
     Same seed gives same results. Returns impact points (N, 2); optionally full trajectories.
+    When return_impact_speeds=True, also returns impact_speeds (N,) in m/s.
     All inputs explicit. SI units.
     """
     pos0 = np.asarray(pos0, dtype=float).reshape(3)
@@ -41,6 +56,7 @@ def run_monte_carlo(
 
     impact_points = []
     trajectories_out = [] if return_trajectories else None
+    impact_speeds_out = [] if return_impact_speeds else None
 
     for _ in range(n_samples):
         wind = _draw_wind_sample(rng, wind_mean, wind_std)
@@ -53,8 +69,14 @@ def run_monte_carlo(
         impact_points.append(xy)
         if return_trajectories:
             trajectories_out.append(trajectory)
+        if return_impact_speeds:
+            impact_speeds_out.append(_impact_speed(trajectory, dt, pos0, vel0))
 
     impact_array = np.array(impact_points, dtype=float).reshape(n_samples, 2)
+    if return_trajectories and return_impact_speeds:
+        return impact_array, trajectories_out, np.array(impact_speeds_out, dtype=float)
     if return_trajectories:
         return impact_array, trajectories_out
+    if return_impact_speeds:
+        return impact_array, np.array(impact_speeds_out, dtype=float)
     return impact_array

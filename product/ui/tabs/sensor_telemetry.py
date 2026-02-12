@@ -47,6 +47,9 @@ def _default_telemetry():
         "wind_uncertainty": None,
         "wind_source": "—",
         "wind_confidence": "—",
+        "wind_mean_ms": None,
+        "wind_std_dev_ms": None,
+        "telemetry_live": False,
     }
 
 
@@ -177,9 +180,25 @@ def _draw_environment_panel(ax, d):
     y -= dy
     row("Wind speed", _fmt(d["wind_speed_ms"], "{:.1f}", " m/s"))
     y -= dy
+    row("Wind mean", _fmt(d.get("wind_mean_ms"), "{:.2f}", " m/s"))
+    y -= dy
+    row("Wind std σ", _fmt(d.get("wind_std_dev_ms"), "{:.2f}", " m/s"))
+    y -= dy
     u = d.get("wind_uncertainty")
     row("Uncertainty", _fmt(u, "{:.2f}", "") if u is not None else "—")
     y -= dy
     row("Source", (d.get("wind_source") or "—")[:14])
     y -= dy
     row("Confidence", (d.get("wind_confidence") or "—")[:12])
+    y -= dy
+    if not d.get("telemetry_live", False):
+        ax.text(
+            0.06,
+            max(y, 0.05),
+            "Using assumed Gaussian wind model.",
+            transform=ax.transAxes,
+            fontsize=7,
+            color=_LABEL,
+            va="center",
+            family="monospace",
+        )

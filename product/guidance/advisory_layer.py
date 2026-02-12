@@ -69,7 +69,9 @@ def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
 def get_impact_points_and_metrics(mission_state, random_seed):
     """
     Run engine once for the given mission state; return impact points and metrics.
-    For use by product entry point (e.g. UI). Returns (impact_points, P_hit, cep50).
+    For use by product entry point (e.g. UI).
+    Returns (impact_points, P_hit, cep50, impact_velocity_stats).
+    impact_velocity_stats: dict with mean_impact_speed, std_impact_speed, p95_impact_speed (m/s).
     """
     from configs import mission_configs as cfg
     from src import monte_carlo
@@ -83,7 +85,7 @@ def get_impact_points_and_metrics(mission_state, random_seed):
             saved[key] = getattr(cfg, key)
         for key, value in engine_inputs.items():
             setattr(cfg, key, value)
-        impact_points = monte_carlo.run_monte_carlo(
+        impact_points, impact_speeds = monte_carlo.run_monte_carlo(
             cfg.uav_pos,
             cfg.uav_vel,
             cfg.mass,
@@ -95,6 +97,7 @@ def get_impact_points_and_metrics(mission_state, random_seed):
             cfg.n_samples,
             random_seed,
             dt=cfg.dt,
+            return_impact_speeds=True,
         )
         target_pos = engine_inputs["target_pos"]
         target_radius = engine_inputs["target_radius"]
@@ -102,7 +105,8 @@ def get_impact_points_and_metrics(mission_state, random_seed):
             impact_points, target_pos, target_radius
         )
         cep50 = metrics.compute_cep50(impact_points, target_pos)
-        return (impact_points, P_hit, cep50)
+        impact_velocity_stats = metrics.compute_impact_velocity_stats(impact_speeds)
+        return (impact_points, P_hit, cep50, impact_velocity_stats)
     finally:
         for key, value in saved.items():
             setattr(cfg, key, value)

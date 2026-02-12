@@ -27,6 +27,13 @@ CATEGORIES = [
     "Military / Tactical",
 ]
 
+CD_SOURCE_OPTIONS = [
+    "Literature",
+    "Empirical Test",
+    "CFD Estimate",
+    "User Override",
+]
+
 # =============================================================================
 # Payload Library v1.0 — FROZEN (2026-02-10)
 # =============================================================================
@@ -254,11 +261,14 @@ class PayloadLibraryTab:
             "calculated_area": None,
             "cd_uncertainty": None,
             "cd_is_manual": False,
+            "cd_source": "Literature",
+            "max_safe_impact_speed": None,
         }
         self._widget_refs: Dict[str, Any] = {
             "fig": None, 
             "mass_tb": None, 
             "cd_tb": None,
+            "safe_tb": None,
             "calc_area_txt": None,
             "dim_tbs": {} # Store per-dimension textboxes
         }
@@ -290,6 +300,8 @@ class PayloadLibraryTab:
         self._state["calculated_area"] = None
         self._state["cd_uncertainty"] = None
         self._state["cd_is_manual"] = False
+        self._state["cd_source"] = "Literature"
+        self._state["max_safe_impact_speed"] = None
 
 
     def _calculate_derived_physics(self):
@@ -424,6 +436,8 @@ class PayloadLibraryTab:
             "mass": m,
             "reference_area": a,
             "drag_coefficient": cd,
+            "cd_source": self._state.get("cd_source", "Literature"),
+            "max_safe_impact_speed": self._state.get("max_safe_impact_speed"),
             "ballistic_coefficient": bc,
             "geometry": geometry_data 
         }
@@ -446,11 +460,28 @@ class PayloadLibraryTab:
         # Cd
         tb = self._widget_refs.get("cd_tb")
         if tb: tb.set_val(str(self._state["drag_coefficient"]) if self._state["drag_coefficient"] else "")
+
+        tb_safe = self._widget_refs.get("safe_tb")
+        if tb_safe:
+            val_safe = self._state.get("max_safe_impact_speed")
+            tb_safe.set_val("" if val_safe is None else str(val_safe))
         
         # Cd Badge
         badge = self._widget_refs.get("cd_badge")
         if badge:
             badge.set_text("User-defined" if self._state.get("cd_is_manual") else "")
+
+        src_txt = self._widget_refs.get("cd_source_txt")
+        if src_txt:
+            src_txt.set_text(f"Cd Source: {self._state.get('cd_source', 'Literature')}")
+
+        src_warn = self._widget_refs.get("cd_source_warn_txt")
+        if src_warn:
+            src_warn.set_text(
+                "User-specified Cd — verify validity."
+                if self._state.get("cd_source") == "User Override"
+                else ""
+            )
 
         # BC
         self._update_bc_display()
@@ -600,6 +631,7 @@ class PayloadLibraryTab:
                     self._state["dims"] = {}
                     self._state["drag_coefficient"] = None
                     self._state["cd_is_manual"] = False
+                    self._state["cd_source"] = "Literature"
                     self._update_calculations()
                     self._rebuild_geometry_ui(fig)
                     fig.canvas.draw()
@@ -680,6 +712,7 @@ class PayloadLibraryTab:
             try: 
                 self._state["drag_coefficient"] = float(v)
                 self._state["cd_is_manual"] = True
+                self._state["cd_source"] = "User Override"
                 self._update_bc_display()
                 self._refresh_param_display()
             except Exception: pass
@@ -687,14 +720,74 @@ class PayloadLibraryTab:
         self._widget_refs["cd_tb"] = tb_cd
         self._geom_axes.append(ax_cd)
 
-        # Cd Assumption Note
-        ax_note = fig.add_axes([px, y - 0.025, pw, 0.02])
-        ax_note.set_axis_off()
-        ax_note.text(0, 0.5, "Assumed constant Cd (averaged)", va="center", color="gray", fontsize=6, family="monospace")
-        self._geom_axes.append(ax_note)
-        
+        # Cd Source selector
+        y -= (row_h + gap)
+        ax_src_lbl = fig.add_axes([px, y, 0.10, row_h])
+        ax_src_lbl.set_axis_off()
+        ax_src_lbl.text(0, 0.5, "Cd Source:", va="center", color=TEXT_LABEL, fontsize=8, family="monospace")
+        self._geom_axes.append(ax_src_lbl)
+
+        curr_src = self._state.get("cd_source", "Literature")
+        src_btn_w, src_btn_h, src_gap = 0.08, 0.028, 0.006
+        for i, src in enumerate(CD_SOURCE_OPTIONS):
+            col = i % 2
+            row = i // 2
+            sx = px + 0.12 + col * (src_btn_w + src_gap)
+            sy = y - row * (src_btn_h + 0.004)
+            ax_src = fig.add_axes([sx, sy, src_btn_w, src_btn_h])
+            is_sel = curr_src == src
+            label = src.replace(" ", "\n") if len(src) > 10 else src
+            btn_src = Button(
+                ax_src,
+                label,
+                color=ACCENT_GO if is_sel else BG_INPUT,
+                hovercolor=ACCENT_GO,
+            )
+            btn_src.label.set_fontsize(6)
+            btn_src.label.set_fontfamily("monospace")
+            btn_src.label.set_color("black" if is_sel else TEXT_PRIMARY)
+
+            def _mk_src(value):
+                def _h(ev):
+                    self._state["cd_source"] = value
+                    self._rebuild_geometry_ui(fig)
+                    self._refresh_param_display()
+                return _h
+
+            btn_src.on_clicked(_mk_src(src))
+            self._geom_buttons.append(btn_src)
+            self._geom_axes.append(ax_src)
+
+        ax_src_txt = fig.add_axes([px, y - 0.065, pw, 0.02])
+        ax_src_txt.set_axis_off()
+        txt_src = ax_src_txt.text(
+            0,
+            0.5,
+            f"Cd Source: {curr_src}",
+            va="center",
+            color=TEXT_PRIMARY,
+            fontsize=7,
+            family="monospace",
+        )
+        self._widget_refs["cd_source_txt"] = txt_src
+        self._geom_axes.append(ax_src_txt)
+
+        ax_src_warn = fig.add_axes([px, y - 0.085, pw, 0.02])
+        ax_src_warn.set_axis_off()
+        txt_warn = ax_src_warn.text(
+            0,
+            0.5,
+            "",
+            va="center",
+            color=ACCENT_WARN,
+            fontsize=6,
+            family="monospace",
+        )
+        self._widget_refs["cd_source_warn_txt"] = txt_warn
+        self._geom_axes.append(ax_src_warn)
+
         # User Defined Badge (Dynamic)
-        ax_badge = fig.add_axes([px + 0.12, y - 0.025, 0.14, 0.02])
+        ax_badge = fig.add_axes([px + 0.22, y - 0.065, 0.14, 0.02])
         ax_badge.set_axis_off()
         txt_badge = ax_badge.text(0.5, 0.5, "", va="center", ha="center", color=ACCENT_WARN, fontsize=6, family="monospace")
         self._widget_refs["cd_badge"] = txt_badge
@@ -707,6 +800,35 @@ class PayloadLibraryTab:
             ax_u.set_axis_off()
             ax_u.text(0, 0.5, f"±{unc}", va="center", color="gray", fontsize=7, family="monospace")
             self._geom_axes.append(ax_u)
+
+        # Optional structural limit for survivability diagnostics
+        y -= (row_h + sgap)
+        ax_safe_lbl = fig.add_axes([px, y, 0.18, row_h])
+        ax_safe_lbl.set_axis_off()
+        ax_safe_lbl.text(0, 0.5, "Max safe impact (m/s):", va="center", color=TEXT_LABEL, fontsize=8, family="monospace")
+        self._geom_axes.append(ax_safe_lbl)
+
+        ax_safe = fig.add_axes([px + 0.20, y, 0.10, row_h])
+        ax_safe.set_facecolor(BG_INPUT)
+        for s in ax_safe.spines.values():
+            s.set_color(BORDER_SUBTLE)
+        init_safe = self._state.get("max_safe_impact_speed")
+        tb_safe = TextBox(ax_safe, "", initial="" if init_safe is None else str(init_safe), textalignment="center")
+
+        def _on_safe(v):
+            vv = str(v).strip()
+            if vv == "":
+                self._state["max_safe_impact_speed"] = None
+            else:
+                try:
+                    self._state["max_safe_impact_speed"] = float(vv)
+                except Exception:
+                    pass
+            self._refresh_param_display()
+
+        tb_safe.on_submit(_on_safe)
+        self._widget_refs["safe_tb"] = tb_safe
+        self._geom_axes.append(ax_safe)
             
         # BC Display at bottom
         self._update_bc_display()

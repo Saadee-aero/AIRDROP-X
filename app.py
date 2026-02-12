@@ -12,6 +12,7 @@ from datetime import datetime
 
 from configs import mission_configs as cfg
 from src import decision_logic
+from src import metrics
 from product.payloads.payload_base import Payload
 from product.missions.target_manager import Target
 from product.missions.environment import Environment
@@ -20,6 +21,7 @@ from product.guidance.advisory_layer import (
     get_impact_points_and_metrics,
     evaluate_advisory,
 )
+from product.guidance.numerical_diagnostics import quick_stability_check
 from product.ui import plots
 from product.ui.ui_theme import *
 from product.ui.tabs.payload_library import PAYLOAD_LIBRARY, CATEGORIES
@@ -291,14 +293,34 @@ def run_simulation(random_seed=None):
         random_seed = cfg.RANDOM_SEED
 
     mission_state = build_mission_state()
-    impact_points, P_hit, cep50 = get_impact_points_and_metrics(
+    impact_points, P_hit, cep50, impact_velocity_stats = get_impact_points_and_metrics(
         mission_state, random_seed
     )
     advisory_result = evaluate_advisory(
         mission_state, "Balanced", random_seed=random_seed
     )
 
-    return impact_points, P_hit, cep50, advisory_result, mission_state
+    m = mission_state.payload.mass
+    cd = mission_state.payload.drag_coefficient
+    area = mission_state.payload.reference_area
+    bc = (m / (cd * area)) if (cd and area) else None
+    altitude = mission_state.uav_position[2]
+    confidence_index = metrics.compute_confidence_index(
+        wind_std=cfg.wind_std,
+        ballistic_coefficient=bc,
+        altitude=altitude,
+        telemetry_freshness=None,
+    )
+
+    return (
+        impact_points,
+        P_hit,
+        cep50,
+        advisory_result,
+        mission_state,
+        impact_velocity_stats,
+        confidence_index,
+    )
 
 
 def compute_reference_area(shape, dims):
@@ -435,13 +457,15 @@ def main():
     # ── Run sim ──
     if run_button or 'results' not in st.session_state:
         with st.spinner('Running Monte Carlo simulation...'):
-            impact_points, P_hit, cep50, advisory_result, mission_state = run_simulation(random_seed)
+            impact_points, P_hit, cep50, advisory_result, mission_state, impact_velocity_stats, confidence_index = run_simulation(random_seed)
             st.session_state.results = {
                 'impact_points': impact_points,
                 'P_hit': P_hit,
                 'cep50': cep50,
                 'advisory_result': advisory_result,
                 'mission_state': mission_state,
+                'impact_velocity_stats': impact_velocity_stats,
+                'confidence_index': confidence_index,
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
 
@@ -454,17 +478,19 @@ def main():
     cep50 = results['cep50']
     impact_points = results['impact_points']
     advisory_result = results['advisory_result']
+    impact_velocity_stats = results.get('impact_velocity_stats')
+    confidence_index = float(results.get('confidence_index', 0.5))
 
     threshold = threshold_pct / 100.0
     decision = decision_logic.evaluate_drop_decision(P_hit, threshold)
 
-    # Calculate Confidence
-    if P_hit > 0.8:
-        confidence = "High"
-    elif P_hit >= 0.6:
-        confidence = "Moderate"
+    # Confidence Index classification
+    if confidence_index >= 0.75:
+        confidence_class = "High"
+    elif confidence_index >= 0.50:
+        confidence_class = "Moderate"
     else:
-        confidence = "Low"
+        confidence_class = "Low"
 
     # ════════════════════════════════════════════════════════════════════════════
     #  5 TABS — matching desktop app
@@ -488,7 +514,7 @@ def main():
         st.markdown(f"""
         <div class="decision-banner {banner_class}">
             <div class="decision-text">{decision}</div>
-            <div class="confidence-text">Confidence: {confidence}</div>
+            <div class="confidence-text">Confidence Index: {confidence_index:.2f} ({confidence_class})</div>
             <div class="decision-stats">
                 HIT {P_hit*100:.1f}% &nbsp;|&nbsp; THRESH {threshold_pct:.0f}% &nbsp;|&nbsp; CEP50 {cep50:.2f}m
             </div>
@@ -548,7 +574,15 @@ def main():
             else:
                 view_rad = 50.0
 
-            plots.plot_impact_dispersion(ax, impact_points, cfg.target_pos, cfg.target_radius, cep50)
+            plots.plot_impact_dispersion(
+                ax,
+                impact_points,
+                cfg.target_pos,
+                cfg.target_radius,
+                cep50,
+                release_point=cfg.uav_pos[:2],
+                wind_vector=cfg.wind_mean[:2],
+            )
             
             # Crosshair
             ax.plot([tp[0]-2, tp[0]+2], [tp[1], tp[1]], color=ACCENT_GO, lw=1, alpha=0.8)
@@ -557,12 +591,6 @@ def main():
             # Symmetric View
             ax.set_xlim(tp[0] - view_rad, tp[0] + view_rad)
             ax.set_ylim(tp[1] - view_rad, tp[1] + view_rad)
-            
-            # Legend
-            ax.legend(["Impacts", "Mean", "Target", "CEP50"], loc="upper left", frameon=True, fontsize=7, facecolor=BG_PANEL, edgecolor=BORDER_SUBTLE, labelcolor=TEXT_LABEL)
-            
-            # Annotations
-            ax.text(0.98, 0.02, "Model: Low-subsonic, drag-dominated free fall", transform=ax.transAxes, ha="right", fontsize=6, color=TEXT_LABEL, family="monospace")
             
             ax.set_title("IMPACT DISPERSION", color=TEXT_LABEL, fontsize=10, family="monospace")
             plt.tight_layout()
@@ -628,21 +656,44 @@ def main():
                     dims["length"] = st.number_input("Length (m)", value=0.3, min_value=0.001, step=0.01, key="pl_bl")
                     dims["width"] = st.number_input("Width (m)", value=0.2, min_value=0.001, step=0.01, key="pl_bw")
                     dims["height"] = st.number_input("Height (m)", value=0.15, min_value=0.001, step=0.01, key="pl_bh")
+                pl_safe_text = st.text_input("Max Safe Impact Speed (m/s, optional)", value="", key="pl_safe_speed")
+                try:
+                    pl_safe_speed = float(pl_safe_text) if str(pl_safe_text).strip() else None
+                except ValueError:
+                    pl_safe_speed = None
+                st.session_state["pl_max_safe_impact_speed"] = pl_safe_speed
 
             with col_b:
                 pl_cd = st.number_input("Drag Coefficient (Cd)", value=0.47, min_value=0.01, step=0.01, key="pl_cd")
+                cd_source = st.selectbox(
+                    "Cd Source",
+                    ["Literature", "Empirical Test", "CFD Estimate", "User Override"],
+                    index=0,
+                    key="pl_cd_source",
+                )
                 st.caption("Assumed constant Cd (orientation-averaged)")
 
                 ref_area = compute_reference_area(shape, dims)
                 bc = compute_bc(pl_mass, pl_cd, ref_area) if ref_area > 0 else None
+                payload_config = {
+                    "mass": pl_mass,
+                    "reference_area": ref_area,
+                    "drag_coefficient": pl_cd,
+                    "cd_source": cd_source,
+                    "max_safe_impact_speed": pl_safe_speed,
+                    "geometry": {"type": shape, "dimensions": dims},
+                }
 
                 st.markdown(f"""
                 <div class="panel-card">
                     <div class="panel-title">AERODYNAMICS</div>
                     <div class="panel-row"><span class="panel-label">Reference Area</span><span class="panel-value-accent">{ref_area:.4f} m²</span></div>
                     <div class="panel-row"><span class="panel-label">Cd</span><span class="panel-value">{pl_cd:.3f}</span></div>
+                    <div class="panel-row"><span class="panel-label">Cd Source</span><span class="panel-value">{cd_source}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
+                if cd_source == "User Override":
+                    st.warning("User-specified Cd — verify validity.")
 
                 st.markdown(f"""
                 <div class="panel-card" style="margin-top: 8px;">
@@ -694,11 +745,14 @@ def main():
                 <div style="color:{TEXT_LABEL}; font-size:0.65rem; font-family:{FONT_FAMILY}; margin-bottom:8px;">DERIVED · ESTIMATED</div>
                 <div class="panel-row"><span class="panel-label">Wind direction</span><span class="panel-value-warn">Awaiting telemetry input</span></div>
                 <div class="panel-row"><span class="panel-label">Wind speed</span><span class="panel-value-warn">Awaiting telemetry input</span></div>
+                <div class="panel-row"><span class="panel-label">Wind mean</span><span class="panel-value-warn">{cfg.wind_mean[0]:.2f} m/s</span></div>
+                <div class="panel-row"><span class="panel-label">Wind std σ</span><span class="panel-value-warn">{cfg.wind_std:.2f} m/s</span></div>
                 <div class="panel-row"><span class="panel-label">Uncertainty</span><span class="panel-value-warn">Awaiting telemetry input</span></div>
                 <div class="panel-row"><span class="panel-label">Source</span><span class="panel-value-warn">Awaiting telemetry input</span></div>
                 <div class="panel-row"><span class="panel-label">Confidence</span><span class="panel-value-warn">Awaiting telemetry input</span></div>
             </div>
             """, unsafe_allow_html=True)
+            st.caption("Using assumed Gaussian wind model.")
 
     # ── TAB 4: Analysis ───────────────────────────────────────────────────────
     with tab4:
@@ -709,25 +763,60 @@ def main():
 
         with row_top2:
             fig_imp, ax_imp = plt.subplots(figsize=(6, 5), facecolor=BG_PANEL)
-            plots.plot_impact_dispersion(ax_imp, impact_points, cfg.target_pos, cfg.target_radius, cep50)
+            plots.plot_impact_dispersion(
+                ax_imp,
+                impact_points,
+                cfg.target_pos,
+                cfg.target_radius,
+                cep50,
+                release_point=cfg.uav_pos[:2],
+                wind_vector=cfg.wind_mean[:2],
+            )
             ax_imp.set_title("IMPACT DISPERSION", color=TEXT_LABEL, fontsize=9, family="monospace")
             plt.tight_layout()
             st.pyplot(fig_imp)
             plt.close(fig_imp)
 
-        row_bot1, row_bot2 = st.columns(2)
+        row_bot1, row_bot2, row_bot3 = st.columns(3)
 
         with row_bot1:
             st.markdown(f'<div class="panel-card"><div class="panel-title">P(HIT) vs WIND UNCERTAINTY</div><div style="text-align:center; color:{TEXT_LABEL}; padding:40px; font-family:{FONT_FAMILY}; font-size:0.8rem;">Sensitivity sweep not performed.<br/>Use Opportunity Analysis to generate sweep.</div></div>', unsafe_allow_html=True)
 
         with row_bot2:
-            # CEP Summary
             st.markdown(f"""
             <div class="panel-card">
                 <div class="panel-title">CEP SUMMARY</div>
                 <div class="panel-row"><span class="panel-label">CEP50</span><span class="panel-value-accent">{cep50:.2f} m</span></div>
                 <div class="panel-row"><span class="panel-label">Hit %</span><span class="panel-value-accent">{P_hit*100:.1f}%</span></div>
                 <div style="color:{TEXT_LABEL}; font-size:0.7rem; font-family:{FONT_FAMILY}; text-align:center; margin-top:12px;">Read-only · No recomputation</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with row_bot3:
+            ivs = impact_velocity_stats or {}
+            mean_s = ivs.get("mean_impact_speed", 0)
+            std_s = ivs.get("std_impact_speed", 0)
+            p95_s = ivs.get("p95_impact_speed", 0)
+            safe_speed = st.session_state.get("pl_max_safe_impact_speed")
+            if safe_speed is None:
+                survivability_text = "No structural limit defined."
+            else:
+                ratio = float(p95_s) / max(float(safe_speed), 1e-9)
+                if ratio <= 0.80:
+                    risk = "LOW"
+                elif ratio <= 1.00:
+                    risk = "MODERATE"
+                else:
+                    risk = "HIGH"
+                survivability_text = f"Survivability Risk: {risk}"
+            st.markdown(f"""
+            <div class="panel-card">
+                <div class="panel-title">IMPACT DYNAMICS</div>
+                <div class="panel-row"><span class="panel-label">Mean impact speed</span><span class="panel-value-accent">{mean_s:.2f} m/s</span></div>
+                <div class="panel-row"><span class="panel-label">Std dev</span><span class="panel-value">{std_s:.2f} m/s</span></div>
+                <div class="panel-row"><span class="panel-label">95% percentile</span><span class="panel-value">{p95_s:.2f} m/s</span></div>
+                <div class="panel-row"><span class="panel-label">Survivability</span><span class="panel-value">{survivability_text}</span></div>
+                <div style="color:{TEXT_LABEL}; font-size:0.65rem; font-family:{FONT_FAMILY}; text-align:center; margin-top:12px;">Impact survivability depends on payload structural limits.</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -751,6 +840,24 @@ def main():
             <div class="panel-row"><span class="panel-label">Uncertainty</span><span class="panel-value">Gaussian wind (mean + std), one sample per trajectory.</span></div>
             <div class="panel-row"><span class="panel-label">Snapshot</span><span class="panel-value">{results['timestamp']}</span></div>
             """, unsafe_allow_html=True)
+
+        with st.expander("NUMERICAL STABILITY", expanded=True):
+            try:
+                stab = quick_stability_check(random_seed=int(random_seed), dt=float(cfg.dt), samples=5)
+                rel_pct = stab["relative_error"] * 100.0
+                st.markdown(f"""
+                <div class="panel-row"><span class="panel-label">Integration method</span><span class="panel-value">{stab['integration_method']}</span></div>
+                <div class="panel-row"><span class="panel-label">Time step Δt</span><span class="panel-value">{stab['dt']} s</span></div>
+                <div class="panel-row"><span class="panel-label">Samples</span><span class="panel-value">{stab['samples']}</span></div>
+                <div class="panel-row"><span class="panel-label">Stability status</span><span class="panel-value">{stab['status']} ({rel_pct:.2f}% relative error)</span></div>
+                """, unsafe_allow_html=True)
+            except Exception:
+                st.markdown(f"""
+                <div class="panel-row"><span class="panel-label">Integration method</span><span class="panel-value">Explicit Euler</span></div>
+                <div class="panel-row"><span class="panel-label">Time step Δt</span><span class="panel-value">{cfg.dt} s</span></div>
+                <div class="panel-row"><span class="panel-label">Samples</span><span class="panel-value">5</span></div>
+                <div class="panel-row"><span class="panel-label">Stability status</span><span class="panel-value">CAUTION</span></div>
+                """, unsafe_allow_html=True)
 
         # Limitations
         with st.expander("LIMITATIONS & ASSUMPTIONS", expanded=True):
@@ -786,8 +893,9 @@ def main():
     st.markdown("---")
     st.markdown(f"""
     <div class="footer-text">
-        AIRDROP-X v1.0.0 | Engine Frozen | Operator-in-the-Loop Decision Support<br/>
-        For research and simulation purposes only.
+        AIRDROP-X v1.1<br/>
+        Engine Frozen | Operator-in-the-Loop Decision Support<br/>
+        Probabilistic Impact & Confidence Modeling Enabled
     </div>
     """, unsafe_allow_html=True)
 

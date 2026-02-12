@@ -67,6 +67,7 @@ class TestPayloadLibrary(unittest.TestCase):
         self.assertEqual(cfg["mass"], 10.0)
         self.assertEqual(cfg["geometry"]["type"], "sphere")
         self.assertEqual(cfg["geometry"]["dimensions"]["diameter_m"], 0.2)
+        self.assertEqual(cfg["cd_source"], "Literature")
         self.assertAlmostEqual(cfg["ballistic_coefficient"], 10.0 / (0.47 * expected_area), places=2)
         
         # 4. Change to Box

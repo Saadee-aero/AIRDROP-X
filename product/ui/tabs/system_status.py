@@ -13,6 +13,7 @@ from product.ui.ui_theme import (
     BORDER_SUBTLE,
     FONT_FAMILY, FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION
 )
+from product.guidance.numerical_diagnostics import quick_stability_check
 from typing import Any, Dict, List, Optional
 
 
@@ -20,7 +21,7 @@ def _defaults() -> Dict[str, Any]:
     """Default display values when not passed from layout."""
     return {
         "system_name": "AIRDROP-X",
-        "version": "1.0",
+        "version": "1.1",
         "build_id": "—",
         "physics_description": "3-DOF point-mass; gravity -Z; quadratic drag (v_rel); explicit Euler.",
         "mc_description": "One wind sample per trajectory; Gaussian uncertainty; fixed seed.",
@@ -66,11 +67,11 @@ def render(ax, **kwargs):
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    # Four sections: enough line height so text never overlaps
+    # Five sections including numerical stability diagnostics
     panel_left = 0.03
     panel_width = 0.94
-    row_h = 0.23
-    gap = 0.018
+    row_h = 0.175
+    gap = 0.012
     y_start = 0.98
 
     def section(title, y_curr, content_lines, line_height=0.12, title_color=None):
@@ -119,7 +120,31 @@ def render(ax, **kwargs):
     ]
     y = section("LIMITATIONS & ASSUMPTIONS", y, lim_lines, line_height=0.11)
 
-    # 4. Warnings / Status Flags
+    # 4. Numerical Stability
+    dt = d.get("dt")
+    seed = d.get("random_seed")
+    stability_lines: List[str] = [
+        "Integration method: Explicit Euler",
+        f"Time step Δt: {_fmt(dt)} s",
+        "Samples: 5",
+        "Stability status: —",
+    ]
+    try:
+        if dt is not None and seed is not None:
+            stab = quick_stability_check(random_seed=int(seed), dt=float(dt), samples=5)
+            status = stab["status"]
+            rel = stab["relative_error"] * 100.0
+            stability_lines = [
+                f"Integration method: {stab['integration_method']}",
+                f"Time step Δt: {stab['dt']} s",
+                f"Samples: {stab['samples']}",
+                f"Stability status: {status} (relative error {rel:.2f}%)",
+            ]
+    except Exception:
+        pass
+    y = section("NUMERICAL STABILITY", y, stability_lines, line_height=0.12)
+
+    # 5. Warnings / Status Flags
     warnings = d.get("warnings") or []
     if not warnings:
         warnings = ["No active warnings."]

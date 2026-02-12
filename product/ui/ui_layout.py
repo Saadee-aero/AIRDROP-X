@@ -54,6 +54,13 @@ def launch_unified_ui(
     n_samples=None,
     dt=None,
     run_simulation_callback=None,
+    impact_velocity_stats=None,
+    confidence_index=None,
+    release_point=None,
+    wind_vector=None,
+    wind_mean=None,
+    wind_std=None,
+    max_safe_impact_speed=None,
 ):
     """
     Create one figure with tab bar and content area. Only one tab's content
@@ -73,6 +80,13 @@ def launch_unified_ui(
         "target_position": target_position,
         "target_radius": target_radius,
         "advisory_result": advisory_result,
+        "impact_velocity_stats": impact_velocity_stats,
+        "confidence_index": confidence_index,
+        "release_point": release_point,
+        "wind_vector": wind_vector,
+        "wind_mean": wind_mean,
+        "wind_std": wind_std,
+        "max_safe_impact_speed": max_safe_impact_speed,
     }
 
     def show_tab(index):
@@ -89,7 +103,16 @@ def launch_unified_ui(
             # Pass callback if provided
             payload_library.render(content_ax, fig, run_simulation_callback=run_simulation_callback)
         elif index == 2:
-            tabs.TABS[2][1](content_ax)
+            tabs.TABS[2][1](
+                content_ax,
+                wind_mean_ms=(
+                    float(mission_data["wind_mean"][0])
+                    if mission_data.get("wind_mean") is not None
+                    else None
+                ),
+                wind_std_dev_ms=mission_data.get("wind_std"),
+                telemetry_live=False,
+            )
         elif index == 3:
             analysis.render(
                 content_ax,
@@ -98,6 +121,8 @@ def launch_unified_ui(
                 target_radius=mission_data["target_radius"],
                 cep50=mission_data["cep50"],
                 target_hit_percentage=mission_data["target_hit_percentage"],
+                impact_velocity_stats=mission_data.get("impact_velocity_stats"),
+                max_safe_impact_speed=mission_data.get("max_safe_impact_speed"),
             )
         elif index == 4:
             system_status.render(
