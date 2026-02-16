@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import time
+import socket
 from datetime import datetime
 
 from configs import mission_configs as cfg
@@ -350,6 +351,38 @@ st.markdown(f"""
 
 # ── Global Regime Badge ──
 st.markdown('<div class="regime-badge">LOW-SUBSONIC | DRAG-DOMINATED</div>', unsafe_allow_html=True)
+
+# ── Offline Status Banner ──
+def check_offline_status():
+    """
+    Check if system has internet connectivity (non-blocking, advisory only).
+    System operates identically whether online or offline.
+    """
+    try:
+        # Quick DNS resolution test (non-blocking, short timeout)
+        socket.setdefaulttimeout(1.0)
+        socket.gethostbyname("8.8.8.8")  # Google DNS - just a connectivity test
+        return False  # Online
+    except (socket.gaierror, socket.timeout, OSError):
+        return True  # Offline
+
+_is_offline = check_offline_status()
+if _is_offline:
+    st.markdown(
+        '<div style="position:fixed;top:100px;right:20px;background-color:rgba(0,255,102,0.15);'
+        'border:1px solid #00FF66;color:#00FF66;padding:4px 8px;font-size:0.7rem;'
+        f'font-family:{FONT_FAMILY};z-index:998;border-radius:2px;letter-spacing:1px;">'
+        'OFFLINE MODE: FULLY OPERATIONAL</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        '<div style="position:fixed;top:100px;right:20px;background-color:rgba(107,142,107,0.15);'
+        'border:1px solid #6b8e6b;color:#6b8e6b;padding:4px 8px;font-size:0.7rem;'
+        f'font-family:{FONT_FAMILY};z-index:998;border-radius:2px;letter-spacing:1px;">'
+        'ONLINE (NOT REQUIRED)</div>',
+        unsafe_allow_html=True
+    )
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

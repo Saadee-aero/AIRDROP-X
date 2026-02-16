@@ -90,12 +90,17 @@ def run_simulation(payload_config=None):
 
 
 def _wait_for_streamlit(port=8501, timeout=30):
-    """Poll until Streamlit server responds."""
+    """Poll until Streamlit server responds.
+    
+    NOTE: This is a localhost-only check (127.0.0.1) - safe for offline operation.
+    Telemetry must be local-only. No internet transport allowed.
+    """
     import urllib.request
     import time
     start = time.time()
     while time.time() - start < timeout:
         try:
+            # Localhost-only check - safe for offline operation
             urllib.request.urlopen(f"http://127.0.0.1:{port}", timeout=2)
             return True
         except Exception:

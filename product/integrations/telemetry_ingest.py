@@ -1,6 +1,11 @@
 """
 Live telemetry ingest. Read-only; parses UAV state and forwards to product pipeline.
 No control or command output. No physics or Monte Carlo.
+
+OFFLINE OPERATION REQUIREMENT:
+Telemetry must be local-only. No internet transport allowed.
+Accepts: Serial (COM/USB), UDP local port, Local TCP, File playback.
+Prohibited: Cloud MQTT, Remote brokers, Remote telemetry services.
 """
 
 from .uav_state import UAVStateSnapshot

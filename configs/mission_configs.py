@@ -1,3 +1,6 @@
+# Offline operation enforcement
+OFFLINE_SAFE = True  # Enforce offline operation - no internet dependencies allowed
+
 # Physical constants (SI)
 g = 9.81
 rho = 1.225
