@@ -322,6 +322,7 @@ def render(
     prob_vs_wind_uncertainty=None,
     impact_velocity_stats=None,
     max_safe_impact_speed=None,
+    dispersion_mode="operator",
     **_,
 ):
     """
@@ -377,6 +378,9 @@ def render(
         if impact_points.ndim == 1:
             impact_points = impact_points.reshape(-1, 2)
         wind_speed = float(np.linalg.norm(wind_mean[:2])) if wind_mean is not None and np.size(wind_mean) >= 2 else 0.0
+        mode_val = str(dispersion_mode).strip().lower()
+        if mode_val not in ("operator", "engineering"):
+            mode_val = "operator"
         plots.plot_impact_dispersion(
             ax_tr,
             impact_points,
@@ -387,10 +391,10 @@ def render(
                 uav_position[:2] if uav_position is not None else None
             ),
             wind_vector=(wind_mean[:2] if wind_mean is not None else None),
-            mode="operator",
+            mode=mode_val,
             P_hit=target_hit_percentage,
             wind_speed=wind_speed,
-            show_density=False,
+            show_density=(mode_val == "engineering"),
         )
         ax_tr.set_title(
             "Impact dispersion",

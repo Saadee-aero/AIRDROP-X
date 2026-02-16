@@ -5,12 +5,10 @@ Streamlit-based web interface — full parity with desktop matplotlib UI.
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import matplotlib.pyplot as plt
 import math
 import time
-import socket
 from datetime import datetime
 
 from configs import mission_configs as cfg
@@ -94,6 +92,12 @@ st.markdown(f"""
         background-color: {BG_INPUT} !important;
         color: {ACCENT_GO} !important;
         border-bottom: 2px solid {ACCENT_GO} !important;
+    }}
+    [data-testid="stTabs"] [role="tablist"] {{
+        justify-content: center !important;
+    }}
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {{
+        justify-content: center !important;
     }}
 
     /* ── Buttons ── */
@@ -241,18 +245,16 @@ st.markdown(f"""
 
     /* ── Badges ── */
     .regime-badge {{
-        position: fixed;
-        top: 60px;
-        right: 20px;
+        display: inline-block;
         background-color: rgba(10, 12, 10, 0.8);
         border: 1px solid {BORDER_SUBTLE};
         color: {TEXT_LABEL};
         padding: 4px 8px;
         font-size: 0.7rem;
         font-family: {FONT_FAMILY};
-        z-index: 999;
         border-radius: 2px;
         letter-spacing: 1px;
+        margin-top: 6px;
     }}
     .snapshot-badge {{
         background-color: {ACCENT_WARN};
@@ -312,102 +314,47 @@ st.markdown(f"""
         border-radius: 4px;
         transition: border 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
     }}
-    /* Operator/Engineering Toggle Buttons - Strict State Control v3 */
-    
-    /* Base Style for Toggle Buttons (Inactive Look) */
-    /* Less aggressive resets so active states can win */
-    div:has(.dispersion-toggle-row) [data-testid="stHorizontalBlock"] .stButton > button:has(p) {{
+    /* Operator/Engineering toggle buttons (key-scoped; deterministic on first render) */
+    [class*="st-key-disp_op_mo"] .stButton > button,
+    [class*="st-key-disp_eng_mo"] .stButton > button,
+    [class*="st-key-disp_op_an"] .stButton > button,
+    [class*="st-key-disp_eng_an"] .stButton > button {{
+        width: 100% !important;
+        min-height: 36px !important;
+        border-radius: 4px !important;
+        letter-spacing: 0.05em !important;
         background-color: #0a0a0a !important;
-        color: #4a6a4a !important;
         border: 1px solid #2a3a2a !important;
-        box-shadow: none;
-        opacity: 0.6;
-        font-weight: 400 !important;
-        transition: all 0.3s ease !important;
+        box-shadow: none !important;
+        opacity: 1 !important;
+        transition: color 0.25s ease, font-weight 0.25s ease, text-shadow 0.25s ease !important;
     }}
-    div:has(.dispersion-toggle-row) [data-testid="stHorizontalBlock"] .stButton > button p {{
+    [class*="st-key-disp_op_mo"] .stButton > button p,
+    [class*="st-key-disp_eng_mo"] .stButton > button p,
+    [class*="st-key-disp_op_an"] .stButton > button p,
+    [class*="st-key-disp_eng_an"] .stButton > button p {{
         color: inherit !important;
     }}
-
-    /* ACTIVE STATE: OPERATOR (Column 1 Glows) */
-    /* Using first-child as it worked before */
-    div:has(.dispersion-toggle-row[data-mode="operator"]) [data-testid="stHorizontalBlock"] > div:first-child .stButton > button:has(p) {{
-        background-color: rgba(0, 255, 102, 0.25) !important;
-        color: #00FF66 !important;
-        border: 1px solid #00FF66 !important;
-        border-left: 4px solid #00FF66 !important;
-        box-shadow: 0 0 25px rgba(0, 255, 102, 0.5), inset 0 0 15px rgba(0, 255, 102, 0.15) !important;
-        font-weight: 600 !important;
-        opacity: 1 !important;
+    [class*="st-key-disp_op_mo"] .stButton > button[kind="secondary"],
+    [class*="st-key-disp_eng_mo"] .stButton > button[kind="secondary"],
+    [class*="st-key-disp_op_an"] .stButton > button[kind="secondary"],
+    [class*="st-key-disp_eng_an"] .stButton > button[kind="secondary"] {{
+        color: rgba(44, 255, 5, 0.35) !important;
+        font-weight: 400 !important;
+        text-shadow: none !important;
     }}
-
-    /* ACTIVE STATE: ENGINEERING (Column 2 Glows) */
-    /* Using last-child as it worked before */
-    div:has(.dispersion-toggle-row[data-mode="engineering"]) [data-testid="stHorizontalBlock"] > div:last-child .stButton > button:has(p) {{
-        background-color: rgba(0, 255, 102, 0.25) !important;
-        color: #00FF66 !important;
-        border: 1px solid #00FF66 !important;
-        border-left: 4px solid #00FF66 !important;
-        box-shadow: 0 0 25px rgba(0, 255, 102, 0.5), inset 0 0 15px rgba(0, 255, 102, 0.15) !important;
-        font-weight: 600 !important;
-        opacity: 1 !important;
-    }}
-    
-    /* Strict Inactive Overrides (ensure the OTHER button stays dark) */
-    /* When Operator Active: Column 2 (last-child) Inactive */
-    div:has(.dispersion-toggle-row[data-mode="operator"]) [data-testid="stHorizontalBlock"] > div:last-child .stButton > button:has(p) {{
-        background-color: #0a0a0a !important;
-        border: 1px solid #2a3a2a !important;
-        box-shadow: none !important;
-        opacity: 0.6 !important;
-    }}
-    /* When Engineering Active: Column 1 (first-child) Inactive */
-    div:has(.dispersion-toggle-row[data-mode="engineering"]) [data-testid="stHorizontalBlock"] > div:first-child .stButton > button:has(p) {{
-        background-color: #0a0a0a !important;
-        border: 1px solid #2a3a2a !important;
-        box-shadow: none !important;
-        opacity: 0.6 !important;
+    [class*="st-key-disp_op_mo"] .stButton > button[kind="primary"],
+    [class*="st-key-disp_eng_mo"] .stButton > button[kind="primary"],
+    [class*="st-key-disp_op_an"] .stButton > button[kind="primary"],
+    [class*="st-key-disp_eng_an"] .stButton > button[kind="primary"] {{
+        color: #2CFF05 !important;
+        font-weight: 700 !important;
+        text-shadow: 0 0 8px rgba(44, 255, 5, 0.70), 0 0 16px rgba(44, 255, 5, 0.45) !important;
     }}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Global Regime Badge ──
-st.markdown('<div class="regime-badge">LOW-SUBSONIC | DRAG-DOMINATED</div>', unsafe_allow_html=True)
-
-# ── Offline Status Banner ──
-def check_offline_status():
-    """
-    Check if system has internet connectivity (non-blocking, advisory only).
-    System operates identically whether online or offline.
-    """
-    try:
-        # Quick DNS resolution test (non-blocking, short timeout)
-        socket.setdefaulttimeout(1.0)
-        socket.gethostbyname("8.8.8.8")  # Google DNS - just a connectivity test
-        return False  # Online
-    except (socket.gaierror, socket.timeout, OSError):
-        return True  # Offline
-
-_is_offline = check_offline_status()
-if _is_offline:
-    st.markdown(
-        '<div style="position:fixed;top:100px;right:20px;background-color:rgba(0,255,102,0.15);'
-        'border:1px solid #00FF66;color:#00FF66;padding:4px 8px;font-size:0.7rem;'
-        f'font-family:{FONT_FAMILY};z-index:998;border-radius:2px;letter-spacing:1px;">'
-        'OFFLINE MODE: FULLY OPERATIONAL</div>',
-        unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        '<div style="position:fixed;top:100px;right:20px;background-color:rgba(107,142,107,0.15);'
-        'border:1px solid #6b8e6b;color:#6b8e6b;padding:4px 8px;font-size:0.7rem;'
-        f'font-family:{FONT_FAMILY};z-index:998;border-radius:2px;letter-spacing:1px;">'
-        'ONLINE (NOT REQUIRED)</div>',
-        unsafe_allow_html=True
-    )
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
+# ── Helpers ──
 def build_mission_state(payload_config=None):
     """Build MissionState from config or custom payload."""
     if payload_config:
@@ -570,6 +517,8 @@ def main():
         <span style="color: {ACCENT_GO}; font-size: 1.6rem; font-family: {FONT_FAMILY}; letter-spacing: 3px;">
             🎯 AIRDROP-X
         </span>
+        <br/>
+        <div class="regime-badge">LOW-SUBSONIC | DRAG-DOMINATED</div>
         <br/>
         <span style="color: {TEXT_LABEL}; font-size: 0.75rem; font-family: {FONT_FAMILY};">
             Probabilistic guidance simulation for unpowered payload delivery
@@ -1220,55 +1169,7 @@ def main():
         time.sleep(auto_interval_sec)
         st.rerun()
 
-
-
-# --- INJECTED JS FOR BUTTON STYLES ---
-# Force "OPERATOR" and "ENGINEERING" styling based on mode
-current_disp_mode = st.session_state.get("impact_dispersion_mode", "balanced")
-
-# Only apply if we are in a targeted mode
-if current_disp_mode in ["operator", "engineering"]:
-    js_script = f"""
-    <script>
-        // Wait for elements to be rendered
-        setTimeout(function() {{
-            const buttons = Array.from(window.parent.document.querySelectorAll('button'));
-            const operatorBtn = buttons.find(b => b.innerText === "OPERATOR");
-            const engineeringBtn = buttons.find(b => b.innerText === "ENGINEERING");
-
-            if (operatorBtn && engineeringBtn) {{
-                // Reset styling first
-                [operatorBtn, engineeringBtn].forEach(btn => {{
-                    btn.style.boxShadow = "none";
-                    btn.style.opacity = "0.6";
-                    btn.style.backgroundColor = "#0a0a0a";
-                    btn.style.color = "#4a6a4a";
-                    btn.style.border = "1px solid #2a3a2a";
-                    btn.style.transition = "all 0.3s ease";
-                }});
-
-                // Apply Active Style
-                const activeMode = "{current_disp_mode}";
-                const activeBtn = activeMode === "operator" ? operatorBtn : engineeringBtn;
-                
-                if (activeBtn) {{
-                    activeBtn.style.backgroundColor = "rgba(0, 255, 102, 0.25)";
-                    activeBtn.style.color = "#00FF66";
-                    activeBtn.style.border = "1px solid #00FF66";
-                    activeBtn.style.borderLeft = "4px solid #00FF66";
-                    activeBtn.style.boxShadow = "0 0 25px rgba(0, 255, 102, 0.5), inset 0 0 15px rgba(0, 255, 102, 0.15)";
-                    activeBtn.style.opacity = "1";
-                    activeBtn.style.fontWeight = "600";
-                    
-                    // Force text color
-                    const p = activeBtn.querySelector('p');
-                    if (p) p.style.color = "#00FF66";
-                }}
-            }}
-        }}, 300); // Small delay on rerun
-    </script>
-    """
-    components.html(js_script, height=0, width=0)
-
 if __name__ == "__main__":
     main()
+
+

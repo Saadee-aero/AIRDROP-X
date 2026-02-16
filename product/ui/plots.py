@@ -196,7 +196,14 @@ def plot_impact_dispersion(
         ax.set_ylabel("Y (m)", labelpad=0)
         ax.tick_params(axis="both", pad=2)
         ax.set_axisbelow(True)
-        ax.grid(True, color=_GRID_DIM, alpha=0.15, linestyle="-")
+        # Dark, visible, low-distraction grid for operator mode.
+        ax.grid(
+            True,
+            color=_GRID,
+            alpha=0.48,
+            linestyle="-",
+            linewidth=0.7,
+        )
         # Minimal legend: dynamic ellipse color, dashed to match plot, zorder 9, readable
         op_handles = [
             Line2D([0], [0], marker="o", color="none", markerfacecolor="lime", markeredgecolor="lime", markersize=4, label="Target"),
@@ -241,7 +248,18 @@ def plot_impact_dispersion(
     xmin, xmax = mean_x - plot_radius, mean_x + plot_radius
     ymin, ymax = mean_y - plot_radius, mean_y + plot_radius
 
-    ax.scatter(impact_points[:, 0], impact_points[:, 1], color=_SCATTER, alpha=0.35, s=10, edgecolors="none", clip_on=True, zorder=1)
+    # Engineering layering policy (background -> foreground):
+    # density(1/2), impacts(3), target+cep(6), ellipse/axes(7), wind/release(8), mean(9), legend/text(10+).
+    ax.scatter(
+        impact_points[:, 0],
+        impact_points[:, 1],
+        color=_SCATTER,
+        alpha=0.35,
+        s=10,
+        edgecolors="none",
+        clip_on=True,
+        zorder=3,
+    )
     ax.scatter(mean_impact[0], mean_impact[1], color="#ffffff", s=60, marker="x", linewidths=2, clip_on=True, zorder=9)
 
     if release_point is not None:
@@ -313,20 +331,8 @@ def plot_impact_dispersion(
                     zorder=7,
                 )
             )
-            axis_length_major = np.sqrt(max(eigvals[0], 0.0))
-            axis_length_minor = np.sqrt(max(eigvals[1], 0.0))
-            major_vec = eigvecs[:, 0]
-            minor_vec = eigvecs[:, 1]
-            ax.plot(
-                [mean_x - axis_length_major * major_vec[0], mean_x + axis_length_major * major_vec[0]],
-                [mean_y - axis_length_major * major_vec[1], mean_y + axis_length_major * major_vec[1]],
-                color="white", linewidth=1, zorder=7,
-            )
-            ax.plot(
-                [mean_x - axis_length_minor * minor_vec[0], mean_x + axis_length_minor * minor_vec[0]],
-                [mean_y - axis_length_minor * minor_vec[1], mean_y + axis_length_minor * minor_vec[1]],
-                color="white", linewidth=1, zorder=7,
-            )
+            # Keep only confidence ellipse in engineering mode.
+            # Principal-axis overlays are intentionally omitted to avoid layer clutter.
         except Exception:
             pass
 
@@ -338,8 +344,24 @@ def plot_impact_dispersion(
             kde = gaussian_kde(coords)
             zi = kde(np.vstack([xi.flatten(), yi.flatten()]))
             zi = zi.reshape(xi.shape)
-            ax.imshow(np.rot90(zi), extent=[xmin, xmax, ymin, ymax], cmap="viridis", alpha=0.15, aspect="auto", origin="lower", zorder=2)
-            ax.contour(xi, yi, zi, levels=6, colors=_CEP_RING, linewidths=1.2, zorder=3)
+            ax.imshow(
+                np.rot90(zi),
+                extent=[xmin, xmax, ymin, ymax],
+                cmap="viridis",
+                alpha=0.08,
+                aspect="auto",
+                origin="lower",
+                zorder=1,
+            )
+            ax.contour(
+                xi,
+                yi,
+                zi,
+                levels=6,
+                colors=_CEP_RING,
+                linewidths=0.8,
+                zorder=2,
+            )
         except Exception:
             pass
     elif impact_points.shape[0] < 30 and impact_points.shape[0] >= 2:
@@ -364,7 +386,13 @@ def plot_impact_dispersion(
     ax.set_ylabel("Y (m)", labelpad=0)
     ax.tick_params(axis="both", pad=2)
     ax.set_axisbelow(True)
-    ax.grid(True, color=_GRID_DIM, alpha=0.15, linestyle="-")
+    ax.grid(
+        True,
+        color=_GRID,
+        alpha=0.48,
+        linestyle="-",
+        linewidth=0.7,
+    )
     ax.text(
         0.98,
         0.02,
@@ -397,15 +425,19 @@ def plot_impact_dispersion(
         )
     leg_eng = ax.legend(
         handles=handles,
-        loc="upper left",
+        loc="lower left",
         frameon=True,
-        fontsize=7,
-        framealpha=0.6,
+        fontsize=6,
+        framealpha=0.55,
         facecolor=(0.06, 0.08, 0.06),
         edgecolor="none",
         labelcolor="#b0d0b0",
+        handlelength=1.2,
+        handletextpad=0.5,
+        borderpad=0.4,
     )
-    leg_eng.set_zorder(9)
+    leg_eng.get_frame().set_boxstyle("round,pad=0.2")
+    leg_eng.set_zorder(11)
 
 
 def plot_sensitivity(ax, x_values, y_values, x_label, y_label, title=None):

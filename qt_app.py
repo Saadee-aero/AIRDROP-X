@@ -177,11 +177,17 @@ class AirdropMainWindow(QMainWindow):
         # Seed regeneration mode (explicitly toggled by operator).
         self._regen_seed_mode: bool = False
 
+        # Operator/Engineering display mode.
+        # Default mode at startup must be operator.
+        self.current_mode: str = "operator"
+
         # UI references
         self._tabs: QTabWidget | None = None
         self._snapshot_label: QLabel | None = None
         self._status_seed_label: QLabel | None = None
         self._regen_seed_checkbox: QCheckBox | None = None
+        self._operator_mode_btn: QPushButton | None = None
+        self._engineering_mode_btn: QPushButton | None = None
 
         self._init_ui()
 
@@ -206,11 +212,23 @@ class AirdropMainWindow(QMainWindow):
         hlayout.setContentsMargins(0, 0, 0, 0)
 
         self._snapshot_label = QLabel(header)
+        self._operator_mode_btn = QPushButton("Operator", header)
+        self._engineering_mode_btn = QPushButton("Engineering", header)
+        self._operator_mode_btn.setCheckable(True)
+        self._engineering_mode_btn.setCheckable(True)
+        self._operator_mode_btn.clicked.connect(
+            self._on_operator_mode_clicked
+        )
+        self._engineering_mode_btn.clicked.connect(
+            self._on_engineering_mode_clicked
+        )
         rerun_btn = QPushButton("Re-Run Simulation", header)
         rerun_btn.clicked.connect(self._on_rerun_clicked)
 
         hlayout.addWidget(self._snapshot_label)
         hlayout.addStretch(1)
+        hlayout.addWidget(self._operator_mode_btn)
+        hlayout.addWidget(self._engineering_mode_btn)
         hlayout.addWidget(rerun_btn)
 
         self._tabs = QTabWidget(central)
@@ -222,6 +240,7 @@ class AirdropMainWindow(QMainWindow):
         vlayout.addWidget(self._tabs)
 
         self.setCentralWidget(central)
+        self.update_mode_styles()
         self._update_snapshot_banner()
 
     # ---- Snapshot lifecycle ----
@@ -264,6 +283,61 @@ class AirdropMainWindow(QMainWindow):
         """Refresh header when operator switches tabs (context clarity)."""
         # index is not used directly; we recompute from current tab state.
         self._update_snapshot_banner()
+
+    def update_mode_styles(self) -> None:
+        """Apply active/inactive visual state for Operator/Engineering mode."""
+        if self._operator_mode_btn is None or self._engineering_mode_btn is None:
+            return
+
+        active_style = (
+            "QPushButton {"
+            " color: #2CFF05;"
+            " border: 2px solid #2CFF05;"
+            " background-color: rgba(44,255,5,0.08);"
+            " font-weight: bold;"
+            "}"
+        )
+        inactive_style = (
+            "QPushButton {"
+            " color: #6C8F6A;"
+            " border: 1px solid #1A2A1A;"
+            " background-color: transparent;"
+            " font-weight: normal;"
+            "}"
+        )
+
+        is_operator = self.current_mode == "operator"
+        self._operator_mode_btn.setChecked(is_operator)
+        self._engineering_mode_btn.setChecked(not is_operator)
+
+        self._operator_mode_btn.setStyleSheet(
+            active_style if is_operator else inactive_style
+        )
+        self._engineering_mode_btn.setStyleSheet(
+            inactive_style if is_operator else active_style
+        )
+
+    def _on_operator_mode_clicked(self) -> None:
+        if self.current_mode == "operator":
+            self.update_mode_styles()
+            return
+        self.current_mode = "operator"
+        current_idx = self._tabs.currentIndex() if self._tabs is not None else 0
+        self._build_tabs()
+        if self._tabs is not None and 0 <= current_idx < self._tabs.count():
+            self._tabs.setCurrentIndex(current_idx)
+        self.update_mode_styles()
+
+    def _on_engineering_mode_clicked(self) -> None:
+        if self.current_mode == "engineering":
+            self.update_mode_styles()
+            return
+        self.current_mode = "engineering"
+        current_idx = self._tabs.currentIndex() if self._tabs is not None else 0
+        self._build_tabs()
+        if self._tabs is not None and 0 <= current_idx < self._tabs.count():
+            self._tabs.setCurrentIndex(current_idx)
+        self.update_mode_styles()
 
     def _on_rerun_clicked(self) -> None:
         """
@@ -396,6 +470,7 @@ class AirdropMainWindow(QMainWindow):
             "max_safe_impact_speed": self._results.get(
                 "max_safe_impact_speed"
             ),
+            "dispersion_mode": self.current_mode,
         }
         qt_bridge.render_into_single_axes(
             fig, analysis.render, **analysis_kwargs
