@@ -495,6 +495,10 @@ def main():
         st.session_state.live_wind_std = cfg.wind_std
     if "impact_dispersion_mode" not in st.session_state:
         st.session_state.impact_dispersion_mode = "operator"
+    if "operator_dispersion_zoom" not in st.session_state:
+        st.session_state.operator_dispersion_zoom = 1.25
+    if "engineering_dispersion_zoom" not in st.session_state:
+        st.session_state.engineering_dispersion_zoom = 0.9
     # LIVE mode: auto-evaluate and performance protection
     if "auto_evaluate_interval" not in st.session_state:
         st.session_state.auto_evaluate_interval = "OFF"
@@ -813,7 +817,34 @@ def main():
                     st.session_state.impact_dispersion_mode = "engineering"
                     st.rerun()
 
-            fig, ax = plt.subplots(figsize=(7, 7), facecolor=BG_PANEL)
+            if disp_mode == "engineering":
+                st.session_state.engineering_dispersion_zoom = float(
+                    st.slider(
+                        "Engineering View Zoom",
+                        min_value=0.60,
+                        max_value=1.80,
+                        value=float(st.session_state.engineering_dispersion_zoom),
+                        step=0.05,
+                        key="eng_zoom_mo_slider",
+                        help="Lower value = zoom out, higher value = zoom in.",
+                    )
+                )
+                view_zoom = float(st.session_state.engineering_dispersion_zoom)
+            else:
+                st.session_state.operator_dispersion_zoom = float(
+                    st.slider(
+                        "Operator View Zoom",
+                        min_value=0.60,
+                        max_value=2.20,
+                        value=float(st.session_state.operator_dispersion_zoom),
+                        step=0.05,
+                        key="op_zoom_mo_slider",
+                        help="Lower value = zoom out, higher value = zoom in.",
+                    )
+                )
+                view_zoom = float(st.session_state.operator_dispersion_zoom)
+
+            fig, ax = plt.subplots(figsize=(6.4, 5.0), facecolor=BG_PANEL)
             wind_speed = float(np.linalg.norm(cfg.wind_mean[:2])) if cfg.wind_mean is not None else 0.0
             plots.plot_impact_dispersion(
                 ax,
@@ -827,6 +858,7 @@ def main():
                 P_hit=P_hit,
                 wind_speed=wind_speed,
                 show_density=(disp_mode == "engineering"),
+                view_zoom=view_zoom,
             )
             mode_badge = "OPERATOR MODE" if disp_mode == "operator" else "ENGINEERING MODE"
             from matplotlib.patches import Circle as MplCircle
@@ -834,7 +866,7 @@ def main():
             ax.add_patch(MplCircle((0.02, 0.98), 0.008, transform=ax.transAxes, facecolor=dot_color, edgecolor="none", zorder=10))
             ax.text(0.042, 0.98, f"IMPACT DISPERSION — {mode_badge}", transform=ax.transAxes, va="center", ha="left", fontsize=9, color=TEXT_LABEL, family="monospace", zorder=10)
             plt.tight_layout()
-            st.pyplot(fig)
+            st.pyplot(fig, use_container_width=True)
             plt.close(fig)
 
         st.caption(f"📸 Snapshot: {results['timestamp']} | Seed: {random_seed} | Samples: {n_samples}")
@@ -1014,7 +1046,34 @@ def main():
                     st.session_state.impact_dispersion_mode = "engineering"
                     st.rerun()
 
-            fig_imp, ax_imp = plt.subplots(figsize=(6, 5), facecolor=BG_PANEL)
+            if disp_mode == "engineering":
+                st.session_state.engineering_dispersion_zoom = float(
+                    st.slider(
+                        "Engineering View Zoom",
+                        min_value=0.60,
+                        max_value=1.80,
+                        value=float(st.session_state.engineering_dispersion_zoom),
+                        step=0.05,
+                        key="eng_zoom_an_slider",
+                        help="Lower value = zoom out, higher value = zoom in.",
+                    )
+                )
+                view_zoom = float(st.session_state.engineering_dispersion_zoom)
+            else:
+                st.session_state.operator_dispersion_zoom = float(
+                    st.slider(
+                        "Operator View Zoom",
+                        min_value=0.60,
+                        max_value=2.20,
+                        value=float(st.session_state.operator_dispersion_zoom),
+                        step=0.05,
+                        key="op_zoom_an_slider",
+                        help="Lower value = zoom out, higher value = zoom in.",
+                    )
+                )
+                view_zoom = float(st.session_state.operator_dispersion_zoom)
+
+            fig_imp, ax_imp = plt.subplots(figsize=(6.4, 5.0), facecolor=BG_PANEL)
             wind_speed = float(np.linalg.norm(cfg.wind_mean[:2])) if cfg.wind_mean is not None else 0.0
             plots.plot_impact_dispersion(
                 ax_imp,
@@ -1028,6 +1087,7 @@ def main():
                 P_hit=P_hit,
                 wind_speed=wind_speed,
                 show_density=(disp_mode == "engineering"),
+                view_zoom=view_zoom,
             )
             mode_badge = "OPERATOR MODE" if disp_mode == "operator" else "ENGINEERING MODE"
             from matplotlib.patches import Circle as MplCircle
@@ -1035,7 +1095,7 @@ def main():
             ax_imp.add_patch(MplCircle((0.02, 0.98), 0.008, transform=ax_imp.transAxes, facecolor=dot_color, edgecolor="none", zorder=10))
             ax_imp.text(0.042, 0.98, f"IMPACT DISPERSION — {mode_badge}", transform=ax_imp.transAxes, va="center", ha="left", fontsize=9, color=TEXT_LABEL, family="monospace", zorder=10)
             plt.tight_layout()
-            st.pyplot(fig_imp)
+            st.pyplot(fig_imp, use_container_width=True)
             plt.close(fig_imp)
 
         row_bot1, row_bot2, row_bot3 = st.columns(3)
