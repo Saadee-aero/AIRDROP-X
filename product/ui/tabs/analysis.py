@@ -376,6 +376,7 @@ def render(
         impact_points = np.asarray(impact_points, dtype=float)
         if impact_points.ndim == 1:
             impact_points = impact_points.reshape(-1, 2)
+        wind_speed = float(np.linalg.norm(wind_mean[:2])) if wind_mean is not None and np.size(wind_mean) >= 2 else 0.0
         plots.plot_impact_dispersion(
             ax_tr,
             impact_points,
@@ -386,6 +387,10 @@ def render(
                 uav_position[:2] if uav_position is not None else None
             ),
             wind_vector=(wind_mean[:2] if wind_mean is not None else None),
+            mode="operator",
+            P_hit=target_hit_percentage,
+            wind_speed=wind_speed,
+            show_density=False,
         )
         ax_tr.set_title(
             "Impact dispersion",

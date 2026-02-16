@@ -8,6 +8,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import time
 from datetime import datetime
 
 from configs import mission_configs as cfg
@@ -38,8 +39,9 @@ from product.ui.ui_theme import (
 )
 from product.ui.tabs.payload_library import PAYLOAD_LIBRARY, CATEGORIES
 
-# ─── Snapshot ID ──────────────────────────────────────────────────────────────
-SNAPSHOT_ID = f"AX-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+# ─── System mode: UI only, no physics change ───────────────────────────────────
+SYSTEM_MODES = ("SNAPSHOT", "LIVE")
+DEFAULT_SYSTEM_MODE = "SNAPSHOT"
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -268,6 +270,81 @@ st.markdown(f"""
         border-radius: 2px;
         margin-left: 6px;
     }}
+    .live-badge {{
+        background-color: #3a5a3a;
+        color: #90ee90;
+        padding: 2px 6px;
+        font-size: 0.65rem;
+        border-radius: 2px;
+        margin-left: 6px;
+    }}
+    .telemetry-badge {{
+        background-color: #3a4a5a;
+        color: #87ceeb;
+        padding: 2px 6px;
+        font-size: 0.65rem;
+        border-radius: 2px;
+        margin-left: 6px;
+    }}
+    .telem-fresh {{ color: #00ff41; }}
+    .telem-delay {{ color: #ffaa00; }}
+    .telem-lost {{ color: #ff4444; }}
+
+    /* ── Dispersion mode toggle (target block that follows markdown with .dispersion-toggle-row) ── */
+    .stMarkdown:has(.dispersion-toggle-row) ~ div[data-testid="stHorizontalBlock"] {{
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+    }}
+    .stMarkdown:has(.dispersion-toggle-row) ~ div[data-testid="stHorizontalBlock"] > div {{
+        flex: 1 1 0;
+        min-width: 0;
+    }}
+    .stMarkdown:has(.dispersion-toggle-row) ~ div[data-testid="stHorizontalBlock"] .stButton {{
+        width: 100%;
+    }}
+    .stMarkdown:has(.dispersion-toggle-row) ~ div[data-testid="stHorizontalBlock"] .stButton > button {{
+        width: 100%;
+        min-height: 36px;
+        letter-spacing: 0.05em;
+        border-radius: 4px;
+        transition: border 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+    }}
+    /* Default: both buttons dimmed; overridden below by data-mode for the selected one */
+    .stMarkdown:has(.dispersion-toggle-row) ~ div[data-testid="stHorizontalBlock"] .stButton > button {{
+        background-color: #0a0a0a !important;
+        color: #4a6a4a !important;
+        border: 1px solid #2a3a2a !important;
+        opacity: 0.6;
+        font-weight: 400;
+        box-shadow: none !important;
+    }}
+    /* OPERATOR selected: first button = active (left bar + border + glow) */
+    .stMarkdown:has(.dispersion-toggle-row[data-mode="operator"]) ~ div[data-testid="stHorizontalBlock"] > div:first-child .stButton > button {{
+        background-color: rgba(0, 50, 25, 0.9) !important;
+        color: #00FF66 !important;
+        border: 2px solid #00FF66 !important;
+        border-left: 4px solid #00FF66 !important;
+        box-shadow: 0 0 8px rgba(0, 255, 102, 0.35) !important;
+        font-weight: 600 !important;
+        opacity: 1;
+    }}
+    .stMarkdown:has(.dispersion-toggle-row[data-mode="operator"]) ~ div[data-testid="stHorizontalBlock"] > div:first-child .stButton > button:hover {{
+        box-shadow: 0 0 10px rgba(0, 255, 102, 0.4) !important;
+    }}
+    /* ENGINEERING selected: second button = active (left bar + border + glow) */
+    .stMarkdown:has(.dispersion-toggle-row[data-mode="engineering"]) ~ div[data-testid="stHorizontalBlock"] > div:last-child .stButton > button {{
+        background-color: rgba(0, 50, 25, 0.9) !important;
+        color: #00FF66 !important;
+        border: 2px solid #00FF66 !important;
+        border-left: 4px solid #00FF66 !important;
+        box-shadow: 0 0 8px rgba(0, 255, 102, 0.35) !important;
+        font-weight: 600 !important;
+        opacity: 1;
+    }}
+    .stMarkdown:has(.dispersion-toggle-row[data-mode="engineering"]) ~ div[data-testid="stHorizontalBlock"] > div:last-child .stButton > button:hover {{
+        box-shadow: 0 0 10px rgba(0, 255, 102, 0.4) !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -391,7 +468,48 @@ def _analytical_advisory(advisory):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    # Header
+    # ── Session state: system mode and panel discipline (UI only) ──
+    if "system_mode" not in st.session_state:
+        st.session_state.system_mode = DEFAULT_SYSTEM_MODE
+    if "params_frozen" not in st.session_state:
+        st.session_state.params_frozen = False
+    if "snapshot_id" not in st.session_state:
+        st.session_state.snapshot_id = f"AX-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # Telemetry health placeholders (LIVE mode; no auto-switch, display only)
+    if "telemetry_packet_rate_hz" not in st.session_state:
+        st.session_state.telemetry_packet_rate_hz = 10.0
+    if "telemetry_last_age_s" not in st.session_state:
+        st.session_state.telemetry_last_age_s = 0.3
+    if "telemetry_status" not in st.session_state:
+        st.session_state.telemetry_status = "Fresh"  # Fresh | Delay | Lost
+    # Live telemetry values (populated by stream; here placeholder from cfg)
+    if "live_uav_pos" not in st.session_state:
+        st.session_state.live_uav_pos = list(cfg.uav_pos)
+    if "live_uav_vel" not in st.session_state:
+        st.session_state.live_uav_vel = list(cfg.uav_vel)
+    if "live_wind_mean" not in st.session_state:
+        st.session_state.live_wind_mean = list(cfg.wind_mean)
+    if "live_wind_std" not in st.session_state:
+        st.session_state.live_wind_std = cfg.wind_std
+    if "impact_dispersion_mode" not in st.session_state:
+        st.session_state.impact_dispersion_mode = "operator"
+    # LIVE mode: auto-evaluate and performance protection
+    if "auto_evaluate_interval" not in st.session_state:
+        st.session_state.auto_evaluate_interval = "OFF"
+    if "last_evaluation_time" not in st.session_state:
+        st.session_state.last_evaluation_time = None  # set when simulation runs
+    if "auto_evaluate_paused" not in st.session_state:
+        st.session_state.auto_evaluate_paused = False
+    if "last_run_duration_sec" not in st.session_state:
+        st.session_state.last_run_duration_sec = 0.0
+    # Optional: store previous ellipse/result for smooth transition (client-side fade would use this)
+    if "previous_results_timestamp" not in st.session_state:
+        st.session_state.previous_results_timestamp = None
+
+    system_mode = st.session_state.system_mode
+    params_frozen = st.session_state.params_frozen
+
+    # Header (Snapshot ID from session state)
     st.markdown(f"""
     <div style="text-align: center; padding: 8px 0 4px 0;">
         <span style="color: {ACCENT_GO}; font-size: 1.6rem; font-family: {FONT_FAMILY}; letter-spacing: 3px;">
@@ -403,46 +521,129 @@ def main():
         </span>
         <br/>
         <span style="color: {TEXT_LABEL}; font-size: 0.65rem; font-family: {FONT_FAMILY}; opacity: 0.7;">
-            {SNAPSHOT_ID}
+            {st.session_state.snapshot_id}
         </span>
     </div>
     """, unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ── Sidebar — Mission Parameters ──
+    # ── Sidebar — Mission Configuration (system-state discipline) ──
     with st.sidebar:
-        st.markdown(f'<div style="color:{ACCENT_GO}; font-family:{FONT_FAMILY}; font-size:1rem; letter-spacing:2px;">⚙ MISSION PARAMETERS</div>', unsafe_allow_html=True)
+        # System mode selector (no auto-switch); value stored in st.session_state.system_mode
+        st.radio(
+            "System mode",
+            options=SYSTEM_MODES,
+            index=SYSTEM_MODES.index(st.session_state.system_mode) if st.session_state.system_mode in SYSTEM_MODES else 0,
+            format_func=lambda x: "Snapshot" if x == "SNAPSHOT" else "Live telemetry",
+            horizontal=False,
+            key="system_mode",
+        )
+        system_mode = st.session_state.system_mode
 
+        # Panel title and subtitle
+        if system_mode == "SNAPSHOT":
+            st.markdown(f'<div style="color:{ACCENT_GO}; font-family:{FONT_FAMILY}; font-size:1rem; letter-spacing:2px;">⚙ MISSION CONFIGURATION (Snapshot)</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.7rem; margin-top:2px;">Parameters frozen at last evaluation.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div style="color:{ACCENT_GO}; font-family:{FONT_FAMILY}; font-size:1rem; letter-spacing:2px;">⚙ MISSION CONFIGURATION (Live Telemetry)</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.7rem; margin-top:2px;">UAV state from live telemetry. Payload assumptions fixed.</div>', unsafe_allow_html=True)
+
+        st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.7rem; margin-top:4px;">Snapshot ID: {st.session_state.snapshot_id}</div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Payload: editable before evaluation, read-only after until "Modify & Re-run"
+        payload_disabled = params_frozen
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">PAYLOAD</div>', unsafe_allow_html=True)
-        mass = st.number_input("Mass (kg)", value=float(cfg.mass), min_value=0.1, step=0.1)
-        Cd = st.number_input("Drag Coefficient", value=float(cfg.Cd), min_value=0.01, step=0.01)
-        if Cd != 0.47: # Check against default or previous context
-             st.markdown(f'<span class="user-def-badge">User-defined assumption</span>', unsafe_allow_html=True)
+        mass = st.number_input("Mass (kg)", value=float(cfg.mass), min_value=0.1, step=0.1, disabled=payload_disabled)
+        Cd = st.number_input("Drag Coefficient", value=float(cfg.Cd), min_value=0.01, step=0.01, disabled=payload_disabled)
+        if Cd != 0.47 and not payload_disabled:
+            st.markdown(f'<span class="user-def-badge">User-defined assumption</span>', unsafe_allow_html=True)
+        A = st.number_input("Reference Area (m²)", value=float(cfg.A), min_value=0.001, step=0.001, format="%.4f", disabled=payload_disabled)
 
-        A = st.number_input("Reference Area (m²)", value=float(cfg.A), min_value=0.001, step=0.001, format="%.4f")
-
+        # UAV: SNAPSHOT = editable before eval, frozen after; LIVE = always read-only + Live badge
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">UAV STATE</div>', unsafe_allow_html=True)
-        uav_x = st.number_input("UAV X (m)", value=float(cfg.uav_pos[0]), step=1.0)
-        uav_y = st.number_input("UAV Y (m)", value=float(cfg.uav_pos[1]), step=1.0)
-        uav_z = st.number_input("UAV Altitude (m)", value=float(cfg.uav_pos[2]), min_value=10.0, step=10.0)
-        uav_vx = st.number_input("UAV Velocity X (m/s)", value=float(cfg.uav_vel[0]), step=1.0)
+        if system_mode == "LIVE":
+            st.markdown('<span class="live-badge">Live</span>', unsafe_allow_html=True)
+            uav_x = st.number_input("UAV X (m)", value=float(st.session_state.live_uav_pos[0]), step=1.0, disabled=True)
+            uav_y = st.number_input("UAV Y (m)", value=float(st.session_state.live_uav_pos[1]), step=1.0, disabled=True)
+            uav_z = st.number_input("UAV Altitude (m)", value=float(st.session_state.live_uav_pos[2]), min_value=10.0, step=10.0, disabled=True)
+            uav_vx = st.number_input("UAV Velocity X (m/s)", value=float(st.session_state.live_uav_vel[0]), step=1.0, disabled=True)
+        else:
+            uav_disabled = params_frozen
+            uav_x = st.number_input("UAV X (m)", value=float(cfg.uav_pos[0]), step=1.0, disabled=uav_disabled)
+            uav_y = st.number_input("UAV Y (m)", value=float(cfg.uav_pos[1]), step=1.0, disabled=uav_disabled)
+            uav_z = st.number_input("UAV Altitude (m)", value=float(cfg.uav_pos[2]), min_value=10.0, step=10.0, disabled=uav_disabled)
+            uav_vx = st.number_input("UAV Velocity X (m/s)", value=float(cfg.uav_vel[0]), step=1.0, disabled=uav_disabled)
 
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">TARGET</div>', unsafe_allow_html=True)
-        target_x = st.number_input("Target X (m)", value=float(cfg.target_pos[0]), step=1.0)
-        target_y = st.number_input("Target Y (m)", value=float(cfg.target_pos[1]), step=1.0)
-        target_radius = st.number_input("Target Radius (m)", value=float(cfg.target_radius), min_value=0.1, step=0.5)
+        target_x = st.number_input("Target X (m)", value=float(cfg.target_pos[0]), step=1.0, disabled=params_frozen)
+        target_y = st.number_input("Target Y (m)", value=float(cfg.target_pos[1]), step=1.0, disabled=params_frozen)
+        target_radius = st.number_input("Target Radius (m)", value=float(cfg.target_radius), min_value=0.1, step=0.5, disabled=params_frozen)
 
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">ENVIRONMENT</div>', unsafe_allow_html=True)
-        wind_x = st.number_input("Wind X (m/s)", value=float(cfg.wind_mean[0]), step=0.5)
-        wind_std = st.number_input("Wind Std Dev (m/s)", value=float(cfg.wind_std), min_value=0.0, step=0.1)
+        if system_mode == "LIVE":
+            st.markdown('<span class="telemetry-badge">Telemetry-driven</span>', unsafe_allow_html=True)
+            wind_x = st.number_input("Wind X (m/s)", value=float(st.session_state.live_wind_mean[0]), step=0.5, disabled=True)
+            wind_std = st.number_input("Wind σ (m/s)", value=float(st.session_state.live_wind_std), min_value=0.0, step=0.1, disabled=True)
+        else:
+            wind_x = st.number_input("Wind X (m/s)", value=float(cfg.wind_mean[0]), step=0.5, disabled=params_frozen)
+            wind_std = st.number_input("Wind Std Dev (m/s)", value=float(cfg.wind_std), min_value=0.0, step=0.1, disabled=params_frozen)
 
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">SIMULATION</div>', unsafe_allow_html=True)
-        n_samples = st.number_input("Monte Carlo Samples", value=cfg.n_samples, min_value=50, max_value=1000, step=50)
-        random_seed = st.number_input("Random Seed", value=cfg.RANDOM_SEED, min_value=0, step=1)
+        sim_disabled = params_frozen
+        n_samples = st.number_input("Monte Carlo Samples", value=cfg.n_samples, min_value=50, max_value=1000, step=50, disabled=sim_disabled)
+        random_seed = st.number_input("Random Seed", value=cfg.RANDOM_SEED, min_value=0, step=1, disabled=sim_disabled)
 
-        st.markdown("---")
-        run_button = st.button("🚀 RUN SIMULATION", use_container_width=True)
+        # Telemetry health (LIVE only; display only, no auto-switch)
+        if system_mode == "LIVE":
+            st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">TELEMETRY HEALTH</div>', unsafe_allow_html=True)
+            rate = st.session_state.telemetry_packet_rate_hz
+            age = st.session_state.telemetry_last_age_s
+            status = st.session_state.telemetry_status
+            if age < 1.0:
+                status_class = "telem-fresh"
+                status_label = "Fresh"
+            elif age <= 2.0:
+                status_class = "telem-delay"
+                status_label = "Delay"
+            else:
+                status_class = "telem-lost"
+                status_label = "Lost"
+            st.markdown(f'<div style="font-size:0.75rem;">Packet Rate: {rate:.1f} Hz &nbsp;|&nbsp; Last: {age:.2f} s &nbsp;|&nbsp; <span class="{status_class}">{status_label}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">AUTO-EVALUATE</div>', unsafe_allow_html=True)
+            auto_interval = st.selectbox(
+                "Auto-evaluate",
+                options=["OFF", "1s", "2s"],
+                index=["OFF", "1s", "2s"].index(st.session_state.auto_evaluate_interval) if st.session_state.auto_evaluate_interval in ("OFF", "1s", "2s") else 0,
+                key="auto_evaluate_select",
+            )
+            st.session_state.auto_evaluate_interval = auto_interval
+            if auto_interval == "OFF":
+                st.session_state.auto_evaluate_paused = False
+            if st.session_state.auto_evaluate_paused:
+                st.markdown(f'<div style="font-size:0.75rem; color:#ffaa00;">Auto-evaluate paused (performance).</div>', unsafe_allow_html=True)
+            # Simulation age (LIVE only) — heavy layer (ellipse, mean, hit %) updates only on Evaluate or auto-evaluate
+            last_ev = st.session_state.last_evaluation_time
+            if last_ev is not None:
+                sim_age_sec = time.time() - last_ev
+                age_class = "telem-delay" if sim_age_sec > 3.0 else "telem-fresh"
+                st.markdown(f'<div style="font-size:0.75rem; margin-top:6px;">Simulation Age: <span class="{age_class}">{sim_age_sec:.1f}s</span></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="font-size:0.75rem; margin-top:6px;">Simulation Age: —</div>', unsafe_allow_html=True)
+            st.markdown("---")
+
+        # Explicit Evaluate button (only this triggers Monte Carlo)
+        if system_mode == "SNAPSHOT":
+            evaluate_clicked = st.button("Evaluate Simulation", type="primary", use_container_width=True)
+        else:
+            evaluate_clicked = st.button("Evaluate with Current Telemetry", type="primary", use_container_width=True)
+
+        if params_frozen:
+            modify_clicked = st.button("Modify & Re-run", use_container_width=True)
+            if modify_clicked:
+                st.session_state.params_frozen = False
+                st.rerun()
 
         st.markdown(f'<div style="color:{TEXT_LABEL}; font-family:{FONT_FAMILY}; font-size:0.8rem; margin-top:12px;">DECISION THRESHOLD</div>', unsafe_allow_html=True)
         threshold_pct = st.slider(
@@ -453,7 +654,7 @@ def main():
             step=1
         )
 
-    # ── Update config ──
+    # ── Update config from sidebar (no silent recompute) ──
     cfg.mass = mass
     cfg.Cd = Cd
     cfg.A = A
@@ -466,8 +667,20 @@ def main():
     cfg.n_samples = n_samples
     cfg.RANDOM_SEED = random_seed
 
-    # ── Run sim ──
-    if run_button or 'results' not in st.session_state:
+    # ── Run sim: Evaluate button OR (LIVE + auto-evaluate interval elapsed) ──
+    auto_interval = st.session_state.auto_evaluate_interval
+    auto_interval_sec = {"OFF": 0, "1s": 1, "2s": 2}.get(auto_interval, 0)
+    last_ev = st.session_state.last_evaluation_time
+    now = time.time()
+    auto_triggered = (
+        system_mode == "LIVE"
+        and auto_interval_sec > 0
+        and not st.session_state.auto_evaluate_paused
+        and (last_ev is None or (now - last_ev) >= auto_interval_sec)
+    )
+
+    if evaluate_clicked or auto_triggered:
+        t0 = time.time()
         with st.spinner('Running Monte Carlo simulation...'):
             impact_points, P_hit, cep50, advisory_result, mission_state, impact_velocity_stats, confidence_index = run_simulation(random_seed)
             st.session_state.results = {
@@ -480,9 +693,21 @@ def main():
                 'confidence_index': confidence_index,
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
+            st.session_state.params_frozen = True
+            st.session_state.snapshot_id = f"AX-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            st.session_state.last_evaluation_time = time.time()
+            st.session_state.previous_results_timestamp = st.session_state.results.get("timestamp")
+        duration = time.time() - t0
+        st.session_state.last_run_duration_sec = duration
+        # Performance protection: pause auto-evaluate if run took too long
+        if duration > 1.5 and system_mode == "LIVE" and auto_interval_sec > 0:
+            st.session_state.auto_evaluate_paused = True
+        if evaluate_clicked:
+            st.rerun()
+        # If auto_triggered we continue to render, then sleep+rerun at end of main()
 
     if 'results' not in st.session_state:
-        st.info("Click RUN SIMULATION to start.")
+        st.info("Click **Evaluate Simulation** (or **Evaluate with Current Telemetry** in Live mode) to start.")
         return
 
     results = st.session_state.results
@@ -572,20 +797,20 @@ def main():
             """, unsafe_allow_html=True)
 
         with col_right:
-            fig, ax = plt.subplots(figsize=(7, 7), facecolor=BG_PANEL)
-            
-            # Symmetric scaling logic
-            tp = np.asarray(cfg.target_pos, dtype=float)
-            impacts = np.asarray(impact_points, dtype=float)
-            
-            # Calculate max extent from target to include all points and target circle
-            # But let's keep it centered on target for the "crosshair" feel
-            if len(impacts) > 0:
-                max_dist = np.max(np.linalg.norm(impacts - tp, axis=1))
-                view_rad = max(max_dist * 1.1, cfg.target_radius * 2.0, 20.0) # Ensure at least 20m or fits data
-            else:
-                view_rad = 50.0
+            disp_mode = st.session_state.impact_dispersion_mode
+            st.markdown(f'<div class="dispersion-toggle-row" data-mode="{disp_mode}"></div>', unsafe_allow_html=True)
+            btn_col1, btn_col2 = st.columns([1, 1])
+            with btn_col1:
+                if st.button("OPERATOR", key="disp_op_mo", type="primary" if disp_mode == "operator" else "secondary", use_container_width=True):
+                    st.session_state.impact_dispersion_mode = "operator"
+                    st.rerun()
+            with btn_col2:
+                if st.button("ENGINEERING", key="disp_eng_mo", type="primary" if disp_mode == "engineering" else "secondary", use_container_width=True):
+                    st.session_state.impact_dispersion_mode = "engineering"
+                    st.rerun()
 
+            fig, ax = plt.subplots(figsize=(7, 7), facecolor=BG_PANEL)
+            wind_speed = float(np.linalg.norm(cfg.wind_mean[:2])) if cfg.wind_mean is not None else 0.0
             plots.plot_impact_dispersion(
                 ax,
                 impact_points,
@@ -594,17 +819,16 @@ def main():
                 cep50,
                 release_point=cfg.uav_pos[:2],
                 wind_vector=cfg.wind_mean[:2],
+                mode=disp_mode,
+                P_hit=P_hit,
+                wind_speed=wind_speed,
+                show_density=(disp_mode == "engineering"),
             )
-            
-            # Crosshair
-            ax.plot([tp[0]-2, tp[0]+2], [tp[1], tp[1]], color=ACCENT_GO, lw=1, alpha=0.8)
-            ax.plot([tp[0], tp[0]], [tp[1]-2, tp[1]+2], color=ACCENT_GO, lw=1, alpha=0.8)
-            
-            # Symmetric View
-            ax.set_xlim(tp[0] - view_rad, tp[0] + view_rad)
-            ax.set_ylim(tp[1] - view_rad, tp[1] + view_rad)
-            
-            ax.set_title("IMPACT DISPERSION", color=TEXT_LABEL, fontsize=10, family="monospace")
+            mode_badge = "OPERATOR MODE" if disp_mode == "operator" else "ENGINEERING MODE"
+            from matplotlib.patches import Circle as MplCircle
+            dot_color = "#00FF66" if disp_mode == "operator" else "#ffaa00"
+            ax.add_patch(MplCircle((0.02, 0.98), 0.008, transform=ax.transAxes, facecolor=dot_color, edgecolor="none", zorder=10))
+            ax.text(0.042, 0.98, f"IMPACT DISPERSION — {mode_badge}", transform=ax.transAxes, va="center", ha="left", fontsize=9, color=TEXT_LABEL, family="monospace", zorder=10)
             plt.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
@@ -774,7 +998,20 @@ def main():
             st.markdown(f'<div class="panel-card"><div class="panel-title">P(HIT) vs TARGET DISTANCE</div><div style="text-align:center; color:{TEXT_LABEL}; padding:40px; font-family:{FONT_FAMILY}; font-size:0.8rem;">Sensitivity sweep not performed.<br/>Use Opportunity Analysis to generate sweep.</div></div>', unsafe_allow_html=True)
 
         with row_top2:
+            disp_mode = st.session_state.impact_dispersion_mode
+            st.markdown(f'<div class="dispersion-toggle-row" data-mode="{disp_mode}"></div>', unsafe_allow_html=True)
+            bc1, bc2 = st.columns([1, 1])
+            with bc1:
+                if st.button("OPERATOR", key="disp_op_an", type="primary" if disp_mode == "operator" else "secondary", use_container_width=True):
+                    st.session_state.impact_dispersion_mode = "operator"
+                    st.rerun()
+            with bc2:
+                if st.button("ENGINEERING", key="disp_eng_an", type="primary" if disp_mode == "engineering" else "secondary", use_container_width=True):
+                    st.session_state.impact_dispersion_mode = "engineering"
+                    st.rerun()
+
             fig_imp, ax_imp = plt.subplots(figsize=(6, 5), facecolor=BG_PANEL)
+            wind_speed = float(np.linalg.norm(cfg.wind_mean[:2])) if cfg.wind_mean is not None else 0.0
             plots.plot_impact_dispersion(
                 ax_imp,
                 impact_points,
@@ -783,8 +1020,16 @@ def main():
                 cep50,
                 release_point=cfg.uav_pos[:2],
                 wind_vector=cfg.wind_mean[:2],
+                mode=disp_mode,
+                P_hit=P_hit,
+                wind_speed=wind_speed,
+                show_density=(disp_mode == "engineering"),
             )
-            ax_imp.set_title("IMPACT DISPERSION", color=TEXT_LABEL, fontsize=9, family="monospace")
+            mode_badge = "OPERATOR MODE" if disp_mode == "operator" else "ENGINEERING MODE"
+            from matplotlib.patches import Circle as MplCircle
+            dot_color = "#00FF66" if disp_mode == "operator" else "#ffaa00"
+            ax_imp.add_patch(MplCircle((0.02, 0.98), 0.008, transform=ax_imp.transAxes, facecolor=dot_color, edgecolor="none", zorder=10))
+            ax_imp.text(0.042, 0.98, f"IMPACT DISPERSION — {mode_badge}", transform=ax_imp.transAxes, va="center", ha="left", fontsize=9, color=TEXT_LABEL, family="monospace", zorder=10)
             plt.tight_layout()
             st.pyplot(fig_imp)
             plt.close(fig_imp)
@@ -910,6 +1155,15 @@ def main():
         Probabilistic Impact & Confidence Modeling Enabled
     </div>
     """, unsafe_allow_html=True)
+
+    # ── LIVE auto-evaluate: schedule next run (no recompute here; next rerun will trigger sim) ──
+    if (
+        system_mode == "LIVE"
+        and auto_interval_sec > 0
+        and not st.session_state.auto_evaluate_paused
+    ):
+        time.sleep(auto_interval_sec)
+        st.rerun()
 
 
 if __name__ == "__main__":
