@@ -4,5 +4,8 @@
     ],
     "python.autoComplete.extraPaths": [
         "./"
+    ],
+    "cursorpyright.analysis.extraPaths": [
+        "./"
     ]
 }

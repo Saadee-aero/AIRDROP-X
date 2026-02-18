@@ -251,6 +251,30 @@ def _payloads_for_category(cat):
     ]
 
 
+# Default physics (mass kg, Cd, reference_area m²) for Apply-to-mission. Missing ids use config.
+def _default_physics_table():
+    from configs import mission_configs as cfg
+    return {
+        "trg_cal_sphere": (1.0, 0.47, 0.0314),   # ~0.1m radius sphere
+        "rel_sac_grain": (25.0, 0.55, 0.15),
+        "rel_med_kit_s": (3.0, 0.55, 0.04),
+        "exp_reentry_test": (10.0, 1.2, 0.05),
+        "com_express_box": (2.0, 0.65, 0.08),
+    }
+
+
+def get_default_physics_for_payload(payload_id_or_name):
+    """Return (mass, cd, reference_area) for a payload id or name. For Qt Apply-to-mission."""
+    from configs import mission_configs as cfg
+    table = _default_physics_table()
+    if payload_id_or_name in table:
+        return table[payload_id_or_name]
+    for p in PAYLOAD_LIBRARY:
+        if p.get("id") == payload_id_or_name or p.get("name") == payload_id_or_name:
+            return table.get(p["id"], (float(cfg.mass), float(cfg.Cd), float(cfg.A)))
+    return (float(cfg.mass), float(cfg.Cd), float(cfg.A))
+
+
 class PayloadLibraryTab:
     """Refactored PayloadLibraryTab for Dynamic Builder."""
 

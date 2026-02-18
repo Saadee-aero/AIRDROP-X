@@ -55,6 +55,24 @@ def plot_impact_dispersion(
     r_target = float(target_radius) if target_radius is not None else 0.0
     r_cep = float(cep50) if (cep50 is not None and cep50 > 0) else 0.0
     is_operator = (mode == "operator")
+    try:
+        zoom = float(view_zoom)
+    except Exception:
+        zoom = 1.0
+    if zoom <= 0:
+        zoom = 1.0
+
+    def _apply_zoom_limits():
+        if zoom == 1.0:
+            return
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        cx = 0.5 * (x0 + x1)
+        cy = 0.5 * (y0 + y1)
+        half_x = 0.5 * (x1 - x0) / zoom
+        half_y = 0.5 * (y1 - y0) / zoom
+        ax.set_xlim(cx - half_x, cx + half_x)
+        ax.set_ylim(cy - half_y, cy + half_y)
 
     # Common: mean and covariance/ellipse
     if impact_points.size > 0:
@@ -94,29 +112,12 @@ def plot_impact_dispersion(
     for spine in ax.spines.values():
         spine.set_color(_BORDER)
 
-    try:
-        zoom_factor = float(view_zoom)
-    except Exception:
-        zoom_factor = 1.0
-    zoom_factor = min(max(zoom_factor, 0.5), 2.5)
-
-    ellipse_half_major = 0.5 * float(ellipse_width) if ellipse_width > 0 else 0.0
-    ellipse_half_minor = 0.5 * float(ellipse_height) if ellipse_height > 0 else 0.0
-
     # ----- Operator mode: minimal layers only -----
     if is_operator:
-        base_radius = max(
-            1.4 * max_dispersion,
-            1.6 * r_target,
-            1.1 * r_cep,
-            1.05 * max(ellipse_half_major, ellipse_half_minor),
-            1.0,
-        )
-        view_radius = (base_radius * 1.12) / zoom_factor
-        center_x = 0.5 * (float(mean_x) + float(target_position[0]))
-        center_y = 0.5 * (float(mean_y) + float(target_position[1]))
-        xmin, xmax = center_x - view_radius, center_x + view_radius
-        ymin, ymax = center_y - view_radius, center_y + view_radius
+        view_radius = max(3.0 * ellipse_width, 2.0 * r_target)
+        view_radius = max(view_radius, 10.0)
+        xmin, xmax = target_position[0] - view_radius, target_position[0] + view_radius
+        ymin, ymax = target_position[1] - view_radius, target_position[1] + view_radius
 
         # Strict z-order: target 6, ellipse 7, wind 8, mean+bias 9, text 10
         ax.add_patch(
@@ -207,43 +208,9 @@ def plot_impact_dispersion(
                 bbox=dict(boxstyle="round,pad=0.35", facecolor=(0.05, 0.07, 0.05, 0.88), edgecolor="none"),
             )
 
-        all_x = [xmin, xmax, float(target_position[0]), float(mean_impact[0])]
-        all_y = [ymin, ymax, float(target_position[1]), float(mean_impact[1])]
-
-        if impact_points.size > 0:
-            all_x.extend([float(np.min(impact_x)), float(np.max(impact_x))])
-            all_y.extend([float(np.min(impact_y)), float(np.max(impact_y))])
-
-        layer_radius = max(r_target, r_cep, ellipse_half_major, ellipse_half_minor, 0.0)
-        all_x.extend([float(target_position[0] - layer_radius), float(target_position[0] + layer_radius)])
-        all_y.extend([float(target_position[1] - layer_radius), float(target_position[1] + layer_radius)])
-        all_x.extend([float(mean_impact[0] - layer_radius), float(mean_impact[0] + layer_radius)])
-        all_y.extend([float(mean_impact[1] - layer_radius), float(mean_impact[1] + layer_radius)])
-
-        if release_point is not None:
-            rp = np.asarray(release_point, dtype=float).reshape(2)
-            all_x.append(float(rp[0]))
-            all_y.append(float(rp[1]))
-
-        if wind_vector is not None:
-            wind = np.asarray(wind_vector, dtype=float).reshape(2)
-            wind_mag = float(np.linalg.norm(wind))
-            if wind_mag > 0:
-                arrow_length = 0.4 * view_radius
-                direction = wind / wind_mag
-                arrow_end = target_position + (direction * arrow_length)
-                all_x.append(float(arrow_end[0]))
-                all_y.append(float(arrow_end[1]))
-
-        xmin, xmax = min(all_x), max(all_x)
-        ymin, ymax = min(all_y), max(all_y)
-        x_span = max(xmax - xmin, 1.0)
-        y_span = max(ymax - ymin, 1.0)
-        x_margin = max(0.10 * x_span, 0.35)
-        y_margin = max(0.10 * y_span, 0.35)
-
-        ax.set_xlim(xmin - x_margin, xmax + x_margin)
-        ax.set_ylim(ymin - y_margin, ymax + y_margin)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        _apply_zoom_limits()
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("X (m)", labelpad=0)
         ax.set_ylabel("Y (m)", labelpad=0)
@@ -295,25 +262,17 @@ def plot_impact_dispersion(
         return
 
     # ----- Engineering mode: full layers -----
-    base_radius = max(
-        1.6 * max_dispersion,
-        1.8 * r_target,
-        1.2 * r_cep,
-        1.1 * max(ellipse_half_major, ellipse_half_minor),
-        1.0,
-    )
-    plot_radius = (base_radius * 1.15) / zoom_factor
-
-    center_x = 0.5 * (float(mean_x) + float(target_position[0]))
-    center_y = 0.5 * (float(mean_y) + float(target_position[1]))
-    xmin, xmax = center_x - plot_radius, center_x + plot_radius
-    ymin, ymax = center_y - plot_radius, center_y + plot_radius
+    plot_radius = max(1.5 * max_dispersion, 1.5 * r_target)
+    plot_radius = max(plot_radius, 1.0)
+    plot_radius *= 1.1
+    xmin, xmax = mean_x - plot_radius, mean_x + plot_radius
+    ymin, ymax = mean_y - plot_radius, mean_y + plot_radius
 
     # Engineering layering policy (background -> foreground):
     # density(1/2), impacts(3), target+cep(6), ellipse/axes(7), wind/release(8), mean(9), legend/text(10+).
     ax.scatter(
-        impact_x,
-        impact_y,
+        impact_points[:, 0],
+        impact_points[:, 1],
         color=_SCATTER,
         alpha=0.35,
         s=10,
@@ -374,44 +333,6 @@ def plot_impact_dispersion(
                 zorder=8,
             )
 
-    # Ensure limits include all key layers (impacts, rings, release, wind arrow).
-    all_x = [xmin, xmax, float(target_position[0]), float(mean_impact[0])]
-    all_y = [ymin, ymax, float(target_position[1]), float(mean_impact[1])]
-
-    if impact_points.size > 0:
-        all_x.extend([float(np.min(impact_x)), float(np.max(impact_x))])
-        all_y.extend([float(np.min(impact_y)), float(np.max(impact_y))])
-
-    layer_radius = max(r_target, r_cep, ellipse_half_major, ellipse_half_minor, 0.0)
-    all_x.extend([float(target_position[0] - layer_radius), float(target_position[0] + layer_radius)])
-    all_y.extend([float(target_position[1] - layer_radius), float(target_position[1] + layer_radius)])
-    all_x.extend([float(mean_impact[0] - layer_radius), float(mean_impact[0] + layer_radius)])
-    all_y.extend([float(mean_impact[1] - layer_radius), float(mean_impact[1] + layer_radius)])
-
-    if release_point is not None:
-        rp = np.asarray(release_point, dtype=float).reshape(2)
-        all_x.append(float(rp[0]))
-        all_y.append(float(rp[1]))
-
-    if wind_vector is not None:
-        wind = np.asarray(wind_vector, dtype=float).reshape(2)
-        wind_mag = float(np.linalg.norm(wind))
-        if wind_mag > 0:
-            arrow_length = 0.4 * plot_radius
-            direction = wind / wind_mag
-            arrow_end = target_position + (direction * arrow_length)
-            all_x.append(float(arrow_end[0]))
-            all_y.append(float(arrow_end[1]))
-
-    xmin, xmax = min(all_x), max(all_x)
-    ymin, ymax = min(all_y), max(all_y)
-    x_span = max(xmax - xmin, 1.0)
-    y_span = max(ymax - ymin, 1.0)
-    x_margin = max(0.12 * x_span, 0.5)
-    y_margin = max(0.12 * y_span, 0.5)
-    xmin, xmax = xmin - x_margin, xmax + x_margin
-    ymin, ymax = ymin - y_margin, ymax + y_margin
-
     eng_ellipse_color = get_probability_color(P_hit)
     if impact_points.shape[0] >= 2 and eigvals is not None and eigvecs is not None:
         try:
@@ -466,8 +387,20 @@ def plot_impact_dispersion(
     elif impact_points.shape[0] < 30 and impact_points.shape[0] >= 2:
         ax.text(0.02, 0.02, "Density map requires \u2265 30 samples.", transform=ax.transAxes, ha="left", va="bottom", fontsize=6, color=_LABEL, family="monospace")
 
-    ax.set_xlim(xmin, xmax)
-    ax.set_ylim(ymin, ymax)
+    # Dynamic axis limits: 20% margin around impact spread (or fallback)
+    if impact_points.shape[0] > 0:
+        all_x = impact_points[:, 0]
+        all_y = impact_points[:, 1]
+        x_range = all_x.max() - all_x.min()
+        y_range = all_y.max() - all_y.min()
+        margin_x = 0.2 * x_range if x_range > 0 else 0.2 * plot_radius
+        margin_y = 0.2 * y_range if y_range > 0 else 0.2 * plot_radius
+        ax.set_xlim(all_x.min() - margin_x, all_x.max() + margin_x)
+        ax.set_ylim(all_y.min() - margin_y, all_y.max() + margin_y)
+    else:
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+    _apply_zoom_limits()
     ax.set_aspect("equal", adjustable="box")
 
     ax.set_xlabel("X (m)", labelpad=0)

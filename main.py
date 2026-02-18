@@ -1,26 +1,24 @@
+"""CLI and compatibility entrypoint for AIRDROP-X."""
+
+from __future__ import annotations
+
 import sys
-import os
-import subprocess
 
 from configs import mission_configs as cfg
-from src import decision_logic
 from src import metrics
 from product.payloads.payload_base import Payload
 from product.missions.target_manager import Target
 from product.missions.environment import Environment
 from product.missions.mission_state import MissionState
 from product.guidance.advisory_layer import (
-    get_impact_points_and_metrics,
     evaluate_advisory,
+    get_impact_points_and_metrics,
 )
 from product.ui.ui_layout import launch_unified_ui
 
 
 def _build_mission_state(payload_config=None):
-    """
-    Build a MissionState from config defaults, optionally overriding payload
-    with a custom dict from the Dynamic Payload Builder.
-    """
+    """Build a MissionState using config defaults or payload override."""
     if payload_config:
         payload = Payload(
             mass=payload_config.get("mass", cfg.mass),
@@ -47,24 +45,15 @@ def _build_mission_state(payload_config=None):
 
 
 def run_simulation(payload_config=None):
-    """
-    Run the full simulation loop.
-    If payload_config is provided (dict from Payload Builder), use it.
-    Otherwise, use defaults from configs.mission_configs.
-    Returns (impact_points, advisory_result).
-    """
-    print(f"\n--- Starting Simulation ---")
+    """Run one full simulation cycle and return result tuple."""
+    print("\n--- Starting Simulation ---")
     if payload_config:
         print(f"Using Custom Payload: {payload_config.get('name', 'Unknown')}")
 
     mission_state = _build_mission_state(payload_config)
-
-    # Run Monte Carlo + metrics
     impact_points, P_hit, cep50, impact_velocity_stats = get_impact_points_and_metrics(
         mission_state, cfg.RANDOM_SEED
     )
-
-    # Evaluate advisory (directional analysis)
     advisory_result = evaluate_advisory(
         mission_state, "Balanced", random_seed=cfg.RANDOM_SEED
     )
@@ -82,91 +71,39 @@ def run_simulation(payload_config=None):
     )
 
     print(f"  -> CEP50: {cep50:.2f} m")
-    print(f"  -> P(Hit): {P_hit*100:.1f} %")
+    print(f"  -> P(Hit): {P_hit * 100:.1f} %")
     print(f"  -> Confidence Index: {confidence_index:.2f}")
     print(f"  -> Advisory: {advisory_result.current_feasibility}")
 
-    return impact_points, advisory_result, P_hit, cep50, impact_velocity_stats, confidence_index
-
-
-def _wait_for_streamlit(port=8501, timeout=30):
-    """Poll until Streamlit server responds.
-    
-    NOTE: This is a localhost-only check (127.0.0.1) - safe for offline operation.
-    Telemetry must be local-only. No internet transport allowed.
-    """
-    import urllib.request
-    import time
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            # Localhost-only check - safe for offline operation
-            urllib.request.urlopen(f"http://127.0.0.1:{port}", timeout=2)
-            return True
-        except Exception:
-            time.sleep(0.3)
-    return False
-
-
-def _launch_desktop_ui():
-    """Launch Streamlit UI in a desktop window — same look as browser, native window."""
-    import webview
-
-    app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py")
-    if not os.path.isfile(app_path):
-        print("app.py not found.")
-        return False
-
-    proc = subprocess.Popen(
-        [
-            sys.executable, "-m", "streamlit", "run", app_path,
-            "--server.headless", "true",
-            "--server.port", "8501",
-            "--browser.gatherUsageStats", "false",
-        ],
-        cwd=os.path.dirname(os.path.abspath(__file__)),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    return (
+        impact_points,
+        advisory_result,
+        P_hit,
+        cep50,
+        impact_velocity_stats,
+        confidence_index,
     )
 
-    try:
-        if not _wait_for_streamlit(8501):
-            proc.terminate()
-            print("Streamlit server did not start in time.")
-            return False
 
-        webview.create_window("AIRDROP-X", "http://127.0.0.1:8501", width=1280, height=800)
-        webview.start()
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+def _launch_qt_app() -> int:
+    from qt_app.main import main as qt_main
 
-    return True
+    return int(qt_main())
 
 
-def _launch_browser_ui():
-    """Launch Streamlit in default browser (for debugging)."""
-    app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py")
-    if not os.path.isfile(app_path):
-        print("app.py not found.")
-        return False
-    subprocess.run(
-        [sys.executable, "-m", "streamlit", "run", app_path],
-        cwd=os.path.dirname(os.path.abspath(__file__)),
-    )
-    return True
-
-
-def main():
-    """Entry point: run simulation and launch UI.
-    Default: desktop window with Streamlit UI (same as browser).
-    Use --browser to open in default browser. Use --matplotlib for legacy Matplotlib UI.
+def main() -> int:
     """
+    Entry point.
+
+    - `python main.py --qt` launches the PySide6 desktop app.
+    - `python main.py --matplotlib` launches legacy Matplotlib UI.
+    - `python main.py` runs one CLI simulation snapshot.
+    """
+    use_qt = "--qt" in sys.argv
     use_matplotlib = "--matplotlib" in sys.argv
-    use_browser = "--browser" in sys.argv
+
+    if use_qt:
+        return _launch_qt_app()
 
     if use_matplotlib:
         impacts, adv, p_hit, cep50, impact_velocity_stats, confidence_index = run_simulation()
@@ -196,13 +133,11 @@ def main():
             dt=cfg.dt,
             run_simulation_callback=run_simulation,
         )
-    elif use_browser:
-        print("Launching AIRDROP-X in browser.")
-        _launch_browser_ui()
-    else:
-        print("Launching AIRDROP-X in desktop window (same UI as browser). Use --browser for browser, --matplotlib for legacy UI.")
-        _launch_desktop_ui()
+        return 0
+
+    run_simulation()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

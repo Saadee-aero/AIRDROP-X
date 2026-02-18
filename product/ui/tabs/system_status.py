@@ -23,7 +23,7 @@ def _defaults() -> Dict[str, Any]:
     return {
         "system_name": "AIRDROP-X",
         "version": "1.1",
-        "build_id": "—",
+        "build_id": "--",
         "physics_description": (
             "3-DOF point-mass; gravity -Z; quadratic drag (v_rel); explicit "
             "Euler."
@@ -40,16 +40,16 @@ def _defaults() -> Dict[str, Any]:
         "snapshot_created_at": None,
         "limitations": [
             "Point-mass payload; no rotation or attitude dynamics.",
-            "2D target (X–Y); impact at Z=0 only.",
+            "2D target (X-Y); impact at Z=0 only.",
             "Uniform atmosphere (constant rho); no wind shear or gusts.",
             "Wind uncertainty: isotropic Gaussian; no spatial/temporal "
             "correlation.",
             "Single release point per run; no multi-drop or sequencing.",
             "Model Validity Envelope (Confidence > 90%):",
-            "  · Altitude (AGL): 150 ft to 12,000 ft",
-            "  · Release Velocity: 0 to 60 m/s (TAS)",
-            "  · Payload Mass: 1 kg to 500 kg",
-            "  · Descent Rate: < 50 m/s (subsonic)",
+            "  - Altitude (AGL): 150 ft to 12,000 ft",
+            "  - Release Velocity: 0 to 60 m/s (TAS)",
+            "  - Payload Mass: 1 kg to 500 kg",
+            "  - Descent Rate: < 50 m/s (subsonic)",
             "Confidence decreases primarily due to environmental uncertainty,",
             "specifically local wind field variance not captured by "
             "single-point sampling.",
@@ -60,7 +60,7 @@ def _defaults() -> Dict[str, Any]:
 
 def _fmt(v: Any) -> str:
     if v is None:
-        return "—"
+        return "--"
     return str(v)
 
 
@@ -77,11 +77,11 @@ def render(ax, **kwargs):
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    # Five sections including numerical stability diagnostics
+    # Five sections including numerical stability diagnostics (aligned spacing)
     panel_left = 0.03
     panel_width = 0.94
-    row_h = 0.175
-    gap = 0.012
+    row_h = 0.18
+    gap = 0.015
     y_start = 0.98
 
     def section(
@@ -113,8 +113,9 @@ def render(ax, **kwargs):
             ha="center",
             va="top",
             family="monospace",
+            weight="bold",
         )
-        yy = 0.80
+        yy = 0.82
         for line in content_lines:
             if yy < 0.05:
                 break
@@ -126,6 +127,7 @@ def render(ax, **kwargs):
                 fontsize=8,
                 color=TEXT_PRIMARY,
                 va="top",
+                ha="left",
                 family="monospace",
             )
             yy -= line_height
@@ -135,9 +137,9 @@ def render(ax, **kwargs):
 
     # 1. Engine Identity
     identity_lines = [
-        f"{d['system_name']}  ·  v{d['version']}  ·  build {d['build_id']}",
-        "Physics: " + str(d["physics_description"] or "—"),
-        "Monte Carlo: " + str(d["mc_description"] or "—"),
+        f"{d['system_name']}  -  v{d['version']}  -  build {d['build_id']}",
+        "Physics: " + str(d["physics_description"] or "--"),
+        "Monte Carlo: " + str(d["mc_description"] or "--"),
         "Config source: configs.mission_configs (ASSUMED)",
     ]
     y = section("ENGINE IDENTITY", y, identity_lines, line_height=0.14)
@@ -151,25 +153,19 @@ def render(ax, **kwargs):
             f"Sample count: {_fmt(d['n_samples'])}   "
             f"Time step: {_fmt(d['dt'])} s"
         ),
-        "Uncertainty: " + str(d["uncertainty_model"] or "—"),
+        "Uncertainty: " + str(d["uncertainty_model"] or "--"),
         f"Snapshot created at: {created_str}",
     ]
     y = section("REPRODUCIBILITY", y, repro_lines, line_height=0.14)
 
-    # 3. Limitations & Assumptions
-    lim_lines: List[str] = ["Known modeling limitations (no hiding):"] + [
-        "  · " + item for item in (d.get("limitations") or [])
-    ]
-    y = section("LIMITATIONS & ASSUMPTIONS", y, lim_lines, line_height=0.11)
-
-    # 4. Numerical Stability
+    # 3. Numerical Stability (Streamlit order: before Limitations)
     dt = d.get("dt")
     seed = d.get("random_seed")
     stability_lines: List[str] = [
         "Integration method: Explicit Euler",
-        f"Time step Δt: {_fmt(dt)} s",
+        f"Time step dt: {_fmt(dt)} s",
         "Samples: 5",
-        "Stability status: —",
+        "Stability status: --",
     ]
     try:
         if dt is not None and seed is not None:
@@ -180,7 +176,7 @@ def render(ax, **kwargs):
             rel = stab["relative_error"] * 100.0
             stability_lines = [
                 f"Integration method: {stab['integration_method']}",
-                f"Time step Δt: {stab['dt']} s",
+                f"Time step dt: {stab['dt']} s",
                 f"Samples: {stab['samples']}",
                 f"Stability status: {status} (relative error {rel:.2f}%)",
             ]
@@ -188,12 +184,18 @@ def render(ax, **kwargs):
         pass
     y = section("NUMERICAL STABILITY", y, stability_lines, line_height=0.12)
 
+    # 4. Limitations & Assumptions
+    lim_lines: List[str] = ["Known modeling limitations (no hiding):"] + [
+        "  - " + item for item in (d.get("limitations") or [])
+    ]
+    y = section("LIMITATIONS & ASSUMPTIONS", y, lim_lines, line_height=0.11)
+
     # 5. Warnings / Status Flags
     warnings = d.get("warnings") or []
     if not warnings:
         warnings = ["No active warnings."]
     warn_lines = [
-        ("  ⚠ " if i == 0 else "  · ") + w for i, w in enumerate(warnings)
+        ("  WARN: " if i == 0 else "  - ") + w for i, w in enumerate(warnings)
     ]
     y = section(
         "WARNINGS / STATUS",

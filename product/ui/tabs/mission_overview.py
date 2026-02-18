@@ -6,7 +6,7 @@ Receives precomputed data only; no computation.
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.lines import Line2D
+from product.ui import plots
 
 # Import unified military-grade theme
 from product.ui.ui_theme import (
@@ -16,11 +16,7 @@ from product.ui.ui_theme import (
     TEXT_LABEL,
     ACCENT_GO,
     ACCENT_NO_GO,
-    ACCENT_WARN,
     BORDER_SUBTLE,
-    SCATTER_PRIMARY,
-    CEP_CIRCLE,
-    MEAN_MARKER,
 )
 
 
@@ -42,8 +38,8 @@ def render(
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    # Left: decision banner + metrics + advisory
-    left_ax = ax.inset_axes([0.02, 0.04, 0.36, 0.92])
+    # Left: decision banner + metrics + advisory (aligned spacing)
+    left_ax = ax.inset_axes([0.02, 0.04, 0.34, 0.92])
     _draw_banner_metrics_advisory(
         left_ax,
         decision,
@@ -54,19 +50,40 @@ def render(
         advisory_result,
         len(impact_points) if impact_points is not None else 0,
         kwargs.get("confidence_index"),
+        kwargs.get("random_seed"),
+        target_radius,
     )
 
-    # Right: target / crosshair view
-    right_ax = ax.inset_axes([0.42, 0.06, 0.56, 0.90])
+    # Right: target / crosshair view (aligned spacing)
+    right_ax = ax.inset_axes([0.38, 0.04, 0.60, 0.92])
     _draw_target_view(
         right_ax,
         impact_points,
         target_position,
         target_radius,
         cep50,
+        target_hit_percentage,
         kwargs.get("release_point"),
         kwargs.get("wind_vector"),
+        kwargs.get("dispersion_mode", "operator"),
+        kwargs.get("view_zoom", 1.0),
     )
+
+    snapshot_timestamp = kwargs.get("snapshot_timestamp")
+    random_seed = kwargs.get("random_seed")
+    n_samples = kwargs.get("n_samples")
+    if snapshot_timestamp is not None:
+        ax.text(
+            0.5,
+            0.01,
+            f"Snapshot: {snapshot_timestamp or '---'} | Seed: {random_seed if random_seed is not None else '---'} | Samples: {n_samples if n_samples is not None else '---'}",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            color=TEXT_LABEL,
+            fontsize=7,
+            family="monospace",
+        )
 
 
 def _draw_banner_metrics_advisory(
@@ -79,6 +96,8 @@ def _draw_banner_metrics_advisory(
     advisory,
     n_samples,
     confidence_index=None,
+    random_seed=None,
+    target_radius=None,
 ):
     ax.set_axis_off()
     ax.set_facecolor(BG_PANEL)
@@ -87,9 +106,9 @@ def _draw_banner_metrics_advisory(
     # Panel border
     ax.add_patch(
         mpatches.Rectangle(
-            (0, 0),
-            1,
-            1,
+            (0.01, 0.01),
+            0.98,
+            0.98,
             linewidth=1,
             edgecolor=BORDER_SUBTLE,
             facecolor=BG_PANEL,
@@ -119,7 +138,7 @@ def _draw_banner_metrics_advisory(
         0.89,
         label,
         transform=ax.transAxes,
-        fontsize=24,
+        fontsize=22,
         fontweight="bold",
         color=color,
         ha="center",
@@ -142,7 +161,7 @@ def _draw_banner_metrics_advisory(
         0.82,
         f"Confidence Index: {ci:.2f} ({ci_label})",
         transform=ax.transAxes,
-        fontsize=10,
+        fontsize=9,
         color=TEXT_PRIMARY,
         ha="center",
         va="center",
@@ -150,9 +169,9 @@ def _draw_banner_metrics_advisory(
         weight="bold",
     )
 
-    # Stats line inside banner
+    # Stats line inside banner (Streamlit parity: THRESH)
     stats = (
-        f"HIT {target_hit_percentage:.1f}% | THR {threshold:.1f}% | "
+        f"HIT {target_hit_percentage:.1f}% | THRESH {threshold:.1f}% | "
         f"CEP50 {cep50:.2f}m"
     )
     ax.text(
@@ -160,15 +179,15 @@ def _draw_banner_metrics_advisory(
         0.74,
         stats,
         transform=ax.transAxes,
-        fontsize=8,
+        fontsize=7.5,
         color=TEXT_LABEL,
         ha="center",
         va="top",
         family="monospace",
     )
 
-    # 2. Key Metrics
-    y = 0.64
+    # 2. Key Metrics (aligned spacing)
+    y = 0.62
     ax.text(
         0.06,
         y,
@@ -178,9 +197,16 @@ def _draw_banner_metrics_advisory(
         color=ACCENT_GO,
         family="monospace",
         va="center",
+        weight="bold",
     )
 
     y -= 0.06
+
+    try:
+        samples_int = int(n_samples)
+    except Exception:
+        samples_int = 0
+    hits_text = f"{int(samples_int * phit)}/{samples_int}" if samples_int > 0 else "--/--"
 
     def row(lbl, val, y_pos):
         ax.text(
@@ -191,6 +217,7 @@ def _draw_banner_metrics_advisory(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -206,14 +233,17 @@ def _draw_banner_metrics_advisory(
         )
 
     row("Mode", str(mode), y)
-    y -= 0.05
-    row("Samples", str(n_samples), y)
-    y -= 0.05
-    # Seed is not passed here currently, skip or add if crucial.
-    # It's in system status.
-    row("Hits", f"{int(n_samples * phit)}/{n_samples}", y)
+    y -= 0.052
+    row("Samples", str(samples_int) if samples_int > 0 else "--", y)
+    y -= 0.052
+    row("Seed", str(random_seed) if random_seed is not None else "--", y)
+    y -= 0.052
+    row("Hits", hits_text, y)
+    y -= 0.052
+    if target_radius is not None:
+        row("Target Radius", f"{float(target_radius):.1f} m", y)
 
-    # 3. Advisory Panel
+    # 3. Advisory Panel (aligned spacing)
     if advisory:
         y -= 0.12
         ax.text(
@@ -225,6 +255,7 @@ def _draw_banner_metrics_advisory(
             color=ACCENT_GO,
             family="monospace",
             va="center",
+            weight="bold",
         )
         y -= 0.06
 
@@ -237,6 +268,7 @@ def _draw_banner_metrics_advisory(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -250,7 +282,7 @@ def _draw_banner_metrics_advisory(
             va="center",
             family="monospace",
         )
-        y -= 0.05
+        y -= 0.052
 
         # Trend
         ax.text(
@@ -260,21 +292,23 @@ def _draw_banner_metrics_advisory(
             transform=ax.transAxes,
             fontsize=9,
             color=TEXT_LABEL,
-            va="center",
+            va="top",
+            ha="left",
             family="monospace",
         )
         ax.text(
             0.94,
             y,
-            advisory.trend_summary[:25],
+            advisory.trend_summary,
             transform=ax.transAxes,
             fontsize=8,
             color=TEXT_PRIMARY,
             ha="right",
-            va="center",
+            va="top",
             family="monospace",
+            wrap=True,
         )
-        y -= 0.05
+        y -= 0.052
 
         # Analytical Text
         def _to_analytic(direction):
@@ -302,6 +336,7 @@ def _draw_banner_metrics_advisory(
             fontsize=9,
             color=TEXT_LABEL,
             va="top",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -324,194 +359,80 @@ def _draw_target_view(
     target_position,
     target_radius,
     cep50,
+    target_hit_percentage=None,
     release_point=None,
     wind_vector=None,
+    dispersion_mode="operator",
+    view_zoom=1.0,
 ):
-    impact_points = np.asarray(impact_points, dtype=float)
     target_position = np.asarray(target_position, dtype=float).reshape(2)
+    impact_points = np.asarray(impact_points, dtype=float)
+    if impact_points.size == 0:
+        impact_points = np.empty((0, 2), dtype=float)
+    elif impact_points.ndim == 1:
+        try:
+            impact_points = impact_points.reshape(-1, 2)
+        except Exception:
+            impact_points = np.empty((0, 2), dtype=float)
 
-    ax.set_facecolor(BG_PANEL)
-    ax.tick_params(colors=TEXT_LABEL, labelsize=8)
-    ax.xaxis.label.set_color(TEXT_LABEL)
-    ax.yaxis.label.set_color(TEXT_LABEL)
-    for spine in ax.spines.values():
-        spine.set_color(BORDER_SUBTLE)
-    ax.grid(True, color=BORDER_SUBTLE, alpha=0.4)
+    mode_val = str(dispersion_mode).strip().lower()
+    if mode_val not in ("operator", "engineering"):
+        mode_val = "operator"
 
-    # Plot impacts
-    if impact_points.size >= 2:
-        ax.scatter(
-            impact_points[:, 0],
-            impact_points[:, 1],
-            color=SCATTER_PRIMARY,
-            alpha=0.35,
-            s=8,
-            edgecolors="none",
-        )
-        mean_impact = np.mean(impact_points, axis=0)
-        ax.scatter(
-            mean_impact[0],
-            mean_impact[1],
-            color=MEAN_MARKER,
-            s=50,
-            zorder=5,
-            marker="x",
-            linewidths=1.5,
-        )
-    if release_point is not None:
-        rp = np.asarray(release_point, dtype=float).reshape(2)
-        ax.scatter(rp[0], rp[1], color=ACCENT_WARN, s=55, marker="D", zorder=5)
+    wind_speed = 0.0
+    if wind_vector is not None:
+        try:
+            wind_speed = float(np.linalg.norm(np.asarray(wind_vector, dtype=float).reshape(2)))
+        except Exception:
+            wind_speed = 0.0
 
-    # Target
+    p_hit_for_color = None
+    if target_hit_percentage is not None:
+        try:
+            p_hit_val = float(target_hit_percentage)
+            p_hit_for_color = p_hit_val / 100.0 if p_hit_val > 1.0 else p_hit_val
+        except Exception:
+            p_hit_for_color = None
+
+    plots.plot_impact_dispersion(
+        ax,
+        impact_points,
+        target_position,
+        target_radius,
+        cep50,
+        release_point=release_point,
+        wind_vector=wind_vector,
+        mode=mode_val,
+        P_hit=p_hit_for_color,
+        wind_speed=wind_speed,
+        show_density=(mode_val == "engineering"),
+        view_zoom=view_zoom,
+    )
+
+    # Match Streamlit tab badge in top-left corner (aligned).
+    mode_badge = "OPERATOR MODE" if mode_val == "operator" else "ENGINEERING MODE"
+    dot_color = "#00FF66" if mode_val == "operator" else "#ffaa00"
     ax.add_patch(
         plt.Circle(
-            target_position,
-            target_radius,
-            color=ACCENT_GO,
-            fill=False,
-            linewidth=1.5,
+            (0.02, 0.98),
+            0.008,
+            transform=ax.transAxes,
+            facecolor=dot_color,
+            edgecolor="none",
+            zorder=10,
         )
     )
-    ax.scatter(
-        target_position[0],
-        target_position[1],
-        color=ACCENT_GO,
-        s=30,
-        zorder=5,
-        edgecolors=BG_PANEL,
-        linewidths=0.5,
-    )
-
-    if cep50 is not None and cep50 > 0:
-        ax.add_patch(
-            plt.Circle(
-                target_position,
-                cep50,
-                color=CEP_CIRCLE,
-                fill=False,
-                linestyle="--",
-                linewidth=1,
-            )
-        )
-    if wind_vector is not None:
-        wind = np.asarray(wind_vector, dtype=float).reshape(2)
-        if float(np.linalg.norm(wind)) > 0:
-            start = np.asarray(target_position, dtype=float).reshape(2)
-            vec = wind * 6.0
-            ax.arrow(
-                start[0],
-                start[1],
-                vec[0],
-                vec[1],
-                width=0.18,
-                head_width=0.9,
-                head_length=1.3,
-                color=ACCENT_WARN,
-                length_includes_head=True,
-            )
-
-    # Crosshair
-    cx, cy = float(target_position[0]), float(target_position[1])
-    ax.plot(
-        [cx - 2, cx + 2], [cy, cy], color=ACCENT_GO, linewidth=1, alpha=0.8
-    )
-    ax.plot(
-        [cx, cx], [cy - 2, cy + 2], color=ACCENT_GO, linewidth=1, alpha=0.8
-    )
-
-    # Annotations
     ax.text(
-        0.02,
+        0.042,
         0.98,
-        "IMPACT DISPERSION",
+        f"IMPACT DISPERSION — {mode_badge}",
         transform=ax.transAxes,
         ha="left",
         va="top",
         color=TEXT_LABEL,
-        fontsize=10,
+        fontsize=9,
         family="monospace",
-    )
-    ax.text(
-        0.98,
-        0.02,
-        "Model: Low-subsonic, drag-dominated free fall",
-        transform=ax.transAxes,
-        ha="right",
-        va="bottom",
-        color=TEXT_LABEL,
-        fontsize=7,
-        family="monospace",
+        weight="bold",
+        zorder=12,
     )
 
-    handles = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="none",
-            markerfacecolor=SCATTER_PRIMARY,
-            markeredgecolor="none",
-            markersize=6,
-            label="Impacts",
-        ),
-        Line2D(
-            [0],
-            [0],
-            marker="x",
-            color=MEAN_MARKER,
-            markersize=8,
-            label="Mean",
-        ),
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="none",
-            markerfacecolor=ACCENT_GO,
-            markeredgecolor=ACCENT_GO,
-            markersize=6,
-            label="Target",
-        ),
-        Line2D([0], [0], linestyle="--", color=CEP_CIRCLE, label="CEP50"),
-        Line2D([0], [0], color=ACCENT_WARN, linewidth=2, label="Wind"),
-    ]
-    if release_point is not None:
-        handles.append(
-            Line2D(
-                [0],
-                [0],
-                marker="D",
-                color="none",
-                markerfacecolor=ACCENT_WARN,
-                markeredgecolor=ACCENT_WARN,
-                markersize=6,
-                label="Release",
-            )
-        )
-    ax.legend(
-        handles=handles,
-        loc="upper left",
-        frameon=True,
-        fontsize=7,
-        facecolor=BG_PANEL,
-        edgecolor=BORDER_SUBTLE,
-        labelcolor=TEXT_LABEL,
-    )
-
-    # Symmetric limit logic (replicated from plots.py for consistency if
-    # this standalone view is used)
-    # Actually, let's reuse logic:
-    if impact_points.size > 0:
-        max_d = np.max(
-            np.linalg.norm(impact_points - target_position, axis=1)
-        )
-        rad = max(max_d * 1.1, target_radius * 2.5, 20.0)
-        ax.set_xlim(cx - rad, cx + rad)
-        ax.set_ylim(cy - rad, cy + rad)
-    else:
-        ax.set_xlim(cx - 50, cx + 50)
-        ax.set_ylim(cy - 50, cy + 50)
-
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
-    ax.axis("equal")

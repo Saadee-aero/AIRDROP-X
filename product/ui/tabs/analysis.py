@@ -104,6 +104,7 @@ def _impact_dynamics_panel(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -126,6 +127,7 @@ def _impact_dynamics_panel(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -148,6 +150,7 @@ def _impact_dynamics_panel(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -180,6 +183,7 @@ def _impact_dynamics_panel(
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -239,7 +243,7 @@ def _cep_summary_panel(ax, cep50, target_hit_percentage):
     )
     ax.text(
         0.5,
-        0.88,
+        0.92,
         "CEP SUMMARY",
         transform=ax.transAxes,
         fontsize=10,
@@ -247,9 +251,10 @@ def _cep_summary_panel(ax, cep50, target_hit_percentage):
         ha="center",
         va="top",
         family="monospace",
+        weight="bold",
     )
-    y = 0.68
-    dy = 0.14
+    y = 0.70
+    dy = 0.16
     if cep50 is not None:
         ax.text(
             0.1,
@@ -259,6 +264,7 @@ def _cep_summary_panel(ax, cep50, target_hit_percentage):
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -282,6 +288,7 @@ def _cep_summary_panel(ax, cep50, target_hit_percentage):
             fontsize=9,
             color=TEXT_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -323,6 +330,10 @@ def render(
     impact_velocity_stats=None,
     max_safe_impact_speed=None,
     dispersion_mode="operator",
+    view_zoom=1.0,
+    snapshot_timestamp=None,
+    random_seed=None,
+    n_samples=None,
     **_,
 ):
     """
@@ -336,16 +347,18 @@ def render(
     ax.set_ylim(0, 1)
 
     # 2x2 + IMPACT DYNAMICS: top row (prob/distance, impact dispersion), bottom row (wind, CEP, IMPACT DYNAMICS)
+    # Aligned spacing for consistent layout
     margin = 0.02
     w_top = 0.46
     w_bot = 0.30
     h_bottom = 0.44
     h_top = 0.38
+    gap = 0.02
     tl = [margin, 1.0 - margin - h_top, w_top, h_top]
-    tr = [margin + w_top + 0.02, 1.0 - margin - h_top, w_top, h_top]
+    tr = [margin + w_top + gap, 1.0 - margin - h_top, w_top, h_top]
     bl = [margin, margin, w_bot, h_bottom]
-    bm = [margin + w_bot + 0.02, margin, w_bot, h_bottom]
-    br = [margin + 2 * w_bot + 0.04, margin, w_bot, h_bottom]
+    bm = [margin + w_bot + gap, margin, w_bot, h_bottom]
+    br = [margin + 2 * w_bot + 2 * gap, margin, w_bot, h_bottom]
 
     # Top-left: Probability vs target distance
     ax_tl = ax.inset_axes(tl)
@@ -359,12 +372,12 @@ def render(
                 y_vals,
                 "Target distance (m)",
                 "Hit probability",
-                title="P hit vs target distance",
+                title="P(HIT) vs TARGET DISTANCE",
             )
         else:
-            _placeholder_panel(ax_tl, "P hit vs target distance")
+            _placeholder_panel(ax_tl, "P(HIT) vs TARGET DISTANCE")
     else:
-        _placeholder_panel(ax_tl, "P hit vs target distance")
+        _placeholder_panel(ax_tl, "P(HIT) vs TARGET DISTANCE")
 
     # Top-right: Impact dispersion
     ax_tr = ax.inset_axes(tr)
@@ -378,6 +391,13 @@ def render(
         if impact_points.ndim == 1:
             impact_points = impact_points.reshape(-1, 2)
         wind_speed = float(np.linalg.norm(wind_mean[:2])) if wind_mean is not None and np.size(wind_mean) >= 2 else 0.0
+        p_hit_for_color = None
+        if target_hit_percentage is not None:
+            try:
+                p_hit_val = float(target_hit_percentage)
+                p_hit_for_color = p_hit_val / 100.0 if p_hit_val > 1.0 else p_hit_val
+            except Exception:
+                p_hit_for_color = None
         mode_val = str(dispersion_mode).strip().lower()
         if mode_val not in ("operator", "engineering"):
             mode_val = "operator"
@@ -392,18 +412,38 @@ def render(
             ),
             wind_vector=(wind_mean[:2] if wind_mean is not None else None),
             mode=mode_val,
-            P_hit=target_hit_percentage,
+            P_hit=p_hit_for_color,
             wind_speed=wind_speed,
             show_density=(mode_val == "engineering"),
+            view_zoom=view_zoom,
         )
-        ax_tr.set_title(
-            "Impact dispersion",
-            color=TEXT_LABEL,
+        mode_badge = "OPERATOR MODE" if mode_val == "operator" else "ENGINEERING MODE"
+        dot_color = "#00FF66" if mode_val == "operator" else "#ffaa00"
+        ax_tr.add_patch(
+            mpatches.Circle(
+                (0.02, 0.98),
+                0.008,
+                transform=ax_tr.transAxes,
+                facecolor=dot_color,
+                edgecolor="none",
+                zorder=10,
+            )
+        )
+        ax_tr.text(
+            0.042,
+            0.98,
+            f"IMPACT DISPERSION — {mode_badge}",
+            transform=ax_tr.transAxes,
+            va="top",
+            ha="left",
             fontsize=9,
+            color=TEXT_LABEL,
             family="monospace",
+            weight="bold",
+            zorder=10,
         )
     else:
-        _placeholder_panel(ax_tr, "Impact dispersion", "No impact data")
+        _placeholder_panel(ax_tr, "IMPACT DISPERSION", "No impact data")
 
     # Bottom-left: Probability vs wind uncertainty
     ax_bl = ax.inset_axes(bl)
@@ -423,12 +463,12 @@ def render(
                 y_vals,
                 "Wind uncertainty (m/s)",
                 "Hit probability",
-                title="P hit vs wind uncertainty",
+                title="P(HIT) vs WIND UNCERTAINTY",
             )
         else:
-            _placeholder_panel(ax_bl, "P hit vs wind uncertainty")
+            _placeholder_panel(ax_bl, "P(HIT) vs WIND UNCERTAINTY")
     else:
-        _placeholder_panel(ax_bl, "P hit vs wind uncertainty")
+        _placeholder_panel(ax_bl, "P(HIT) vs WIND UNCERTAINTY")
 
     # Bottom-center: CEP summary
     ax_bm = ax.inset_axes(bm)
@@ -443,3 +483,16 @@ def render(
         impact_velocity_stats,
         max_safe_impact_speed=max_safe_impact_speed,
     )
+
+    if snapshot_timestamp is not None:
+        ax.text(
+            0.5,
+            0.01,
+            f"Snapshot: {snapshot_timestamp or '---'} | Seed: {random_seed if random_seed is not None else '---'} | Samples: {n_samples if n_samples is not None else '---'}",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            color=TEXT_LABEL,
+            fontsize=7,
+            family="monospace",
+        )

@@ -44,12 +44,12 @@ def _default_telemetry():
         "pitch_deg": None,
         "yaw_deg": None,
         "accel_mag_ms2": None,
-        "imu_health": "—",
+        "imu_health": "--",
         "wind_dir_deg": "Awaiting telemetry input",
         "wind_speed_ms": "Awaiting telemetry input",
         "wind_uncertainty": None,
-        "wind_source": "—",
-        "wind_confidence": "—",
+        "wind_source": "--",
+        "wind_confidence": "--",
         "wind_mean_ms": None,
         "wind_std_dev_ms": None,
         "telemetry_live": False,
@@ -58,11 +58,11 @@ def _default_telemetry():
 
 def _fmt(v, fmt_str="{:.2f}", unit=""):
     if v is None:
-        return "—"
+        return "--"
     try:
         return fmt_str.format(float(v)) + unit
     except (TypeError, ValueError):
-        return "—"
+        return "--"
 
 
 def _status_color(status):
@@ -91,33 +91,37 @@ def render(ax, **kwargs):
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    # Snapshot Mode Badge
+    # Mode badge: Streamlit parity — "Snapshot Mode – Not Live Feed" vs "LIVE"
+    live = data.get("telemetry_live", False)
+    badge_text = "LIVE" if live else "Snapshot Mode – Not Live Feed"
     ax.text(
         0.98,
         0.98,
-        "SNAPSHOT MODE – NOT LIVE FEED",
+        badge_text,
         transform=ax.transAxes,
         ha="right",
         va="top",
         fontsize=8,
-        color=ACCENT_WARN,
+        color=ACCENT_GO if live else ACCENT_WARN,
         family="monospace",
         weight="bold",
     )
 
-    # Panel layout: three columns
+    # Panel layout: three columns (aligned spacing)
     # Left: Navigation State (Measured)
     # Center: Attitude & Motion (Measured)
     # Right: Environment (Derived)
     panel_w = 0.30
-    gap = 0.02
-    left = 0.04
+    gap = 0.025
+    left = 0.03
     mid = left + panel_w + gap
     right = mid + panel_w + gap
+    panel_h = 0.86
+    panel_y = 0.06
 
-    _draw_navigation_panel(ax.inset_axes([left, 0.08, panel_w, 0.84]), data)
-    _draw_attitude_panel(ax.inset_axes([mid, 0.08, panel_w, 0.84]), data)
-    _draw_environment_panel(ax.inset_axes([right, 0.08, panel_w, 0.84]), data)
+    _draw_navigation_panel(ax.inset_axes([left, panel_y, panel_w, panel_h]), data)
+    _draw_attitude_panel(ax.inset_axes([mid, panel_y, panel_w, panel_h]), data)
+    _draw_environment_panel(ax.inset_axes([right, panel_y, panel_w, panel_h]), data)
 
 
 def _draw_panel_frame(ax, title, subtitle=None):
@@ -139,7 +143,7 @@ def _draw_panel_frame(ax, title, subtitle=None):
 def _draw_navigation_panel(ax, d):
     _draw_panel_frame(ax, "NAVIGATION STATE", "MEASURED")
     y = 0.82
-    dy = 0.078
+    dy = 0.082
 
     def row(lbl, val, color=None):
         ax.text(
@@ -150,6 +154,7 @@ def _draw_navigation_panel(ax, d):
             fontsize=8,
             color=_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -165,14 +170,14 @@ def _draw_navigation_panel(ax, d):
         )
 
     lat = (
-        _fmt(d["gnss_lat"], "{:.6f}", "°")
+        _fmt(d["gnss_lat"], "{:.6f}", " deg")
         if d["gnss_lat"] is not None
-        else "—"
+        else "--"
     )
     lon = (
-        _fmt(d["gnss_lon"], "{:.6f}", "°")
+        _fmt(d["gnss_lon"], "{:.6f}", " deg")
         if d["gnss_lon"] is not None
-        else "—"
+        else "--"
     )
     row("Latitude", lat)
     y -= dy
@@ -180,22 +185,22 @@ def _draw_navigation_panel(ax, d):
     y -= dy
     row("Speed", _fmt(d["gnss_speed_ms"], "{:.1f}", " m/s"))
     y -= dy
-    row("Heading", _fmt(d["gnss_heading_deg"], "{:.0f}", "°"))
+    row("Heading", _fmt(d["gnss_heading_deg"], "{:.0f}", " deg"))
     y -= dy
     row("Altitude", _fmt(d["gnss_altitude_m"], "{:.0f}", " m"))
     y -= dy
-    fix = d.get("gnss_fix") or "—"
+    fix = d.get("gnss_fix") or "--"
     row("Fix", fix, _status_color(fix))
     y -= dy
     fresh = d.get("gnss_freshness_s")
-    freshness = _fmt(fresh, "{:.2f}", " s ago") if fresh is not None else "—"
+    freshness = _fmt(fresh, "{:.2f}", " s ago") if fresh is not None else "--"
     row("Freshness", freshness)
 
 
 def _draw_attitude_panel(ax, d):
     _draw_panel_frame(ax, "ATTITUDE & MOTION", "MEASURED")
     y = 0.82
-    dy = 0.078
+    dy = 0.082
 
     def row(lbl, val, color=None):
         ax.text(
@@ -206,6 +211,7 @@ def _draw_attitude_panel(ax, d):
             fontsize=8,
             color=_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -220,22 +226,22 @@ def _draw_attitude_panel(ax, d):
             family="monospace",
         )
 
-    row("Roll", _fmt(d["roll_deg"], "{:.1f}", "°"))
+    row("Roll", _fmt(d["roll_deg"], "{:.1f}", " deg"))
     y -= dy
-    row("Pitch", _fmt(d["pitch_deg"], "{:.1f}", "°"))
+    row("Pitch", _fmt(d["pitch_deg"], "{:.1f}", " deg"))
     y -= dy
-    row("Yaw", _fmt(d["yaw_deg"], "{:.1f}", "°"))
+    row("Yaw", _fmt(d["yaw_deg"], "{:.1f}", " deg"))
     y -= dy
-    row("|a|", _fmt(d["accel_mag_ms2"], "{:.2f}", " m/s²"))
+    row("|a|", _fmt(d["accel_mag_ms2"], "{:.2f}", " m/s^2"))
     y -= dy
-    imu = d.get("imu_health") or "—"
+    imu = d.get("imu_health") or "--"
     row("IMU", imu, _status_color(imu))
 
 
 def _draw_environment_panel(ax, d):
     _draw_panel_frame(ax, "ENVIRONMENT", "DERIVED · ESTIMATED")
     y = 0.82
-    dy = 0.078
+    dy = 0.082
 
     def row(lbl, val, color=None):
         ax.text(
@@ -246,6 +252,7 @@ def _draw_environment_panel(ax, d):
             fontsize=8,
             color=_LABEL,
             va="center",
+            ha="left",
             family="monospace",
         )
         ax.text(
@@ -260,20 +267,20 @@ def _draw_environment_panel(ax, d):
             family="monospace",
         )
 
-    row("Wind direction", _fmt(d["wind_dir_deg"], "{:.0f}", "°"))
+    row("Wind direction", _fmt(d["wind_dir_deg"], "{:.0f}", " deg"))
     y -= dy
     row("Wind speed", _fmt(d["wind_speed_ms"], "{:.1f}", " m/s"))
     y -= dy
     row("Wind mean", _fmt(d.get("wind_mean_ms"), "{:.2f}", " m/s"))
     y -= dy
-    row("Wind std σ", _fmt(d.get("wind_std_dev_ms"), "{:.2f}", " m/s"))
+    row("Wind std", _fmt(d.get("wind_std_dev_ms"), "{:.2f}", " m/s"))
     y -= dy
     u = d.get("wind_uncertainty")
-    row("Uncertainty", _fmt(u, "{:.2f}", "") if u is not None else "—")
+    row("Uncertainty", _fmt(u, "{:.2f}", "") if u is not None else "--")
     y -= dy
-    row("Source", (d.get("wind_source") or "—")[:14])
+    row("Source", (d.get("wind_source") or "--")[:14])
     y -= dy
-    row("Confidence", (d.get("wind_confidence") or "—")[:12])
+    row("Confidence", (d.get("wind_confidence") or "--")[:12])
     y -= dy
     if not d.get("telemetry_live", False):
         ax.text(

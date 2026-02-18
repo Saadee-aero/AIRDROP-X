@@ -12,24 +12,15 @@ evaluating drop/no-drop decisions using probabilistic metrics.
 - Monte Carlo trajectory simulation
 - Hit probability estimation
 - User-defined decision threshold
-- Web-based preview interface
-- Qt desktop application
+- Offline PySide6 desktop application
 
 ## Quick Start
-
-### Web Preview (Recommended)
-Run the interactive web interface:
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-The app will open in your browser at http://localhost:8501
 
 ### Desktop Application
 For the Qt-based desktop application:
 ```bash
-python qt_app.py
+pip install -r requirements.txt
+python qt_app/main.py
 ```
 
 ### Command Line
@@ -44,6 +35,10 @@ python main.py
 - Impact dispersion visualization
 - Advisory guidance system
 - Reproducible results with seed control
+- Fully offline operation (no browser, no HTTP server)
+- GCS-ready desktop UI: runs alongside any ground control station without embarrassment
+- Payload Library: select category/payload and apply mass/Cd/area to mission
+- Telemetry source: Mock (synthetic) or File playback (CSV replay) for LIVE mode
 
 ## Disclaimer
 This project is intended for research and simulation purposes only.
