@@ -4,32 +4,80 @@ from __future__ import annotations
 
 from datetime import datetime
 import time
+from enum import Enum
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QThread, QTimer, Signal, Slot, Qt
+from PySide6.QtGui import QCursor, QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
-    QDoubleSpinBox,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from adapter import run_simulation_snapshot
+from color_profile import adjust_color_intensity
+from evaluation_worker import EvaluationWorker, TelemetryState, ConfigState
+from snapshot_validation import validate_snapshot
+from src.decision_stability import enrich_evaluation_snapshot
+from mission_config_tab import MissionConfigTab
 from side_panel import MissionConfigPanel
 from telemetry import TelemetryWorker
-from widgets import StatusStrip
+from widgets import NoWheelDoubleSpinBox, NoWheelSlider, StatusStrip
 from product.ui import qt_bridge
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 from product.ui.tabs import (
     analysis as analysis_tab_renderer,
     mission_overview as mission_overview_tab_renderer,
-    payload_library,
     sensor_telemetry,
     system_status,
 )
+
+
+def build_config_snapshot(threshold_pct: float) -> dict:
+    """Build a valid CONFIG snapshot for schema compliance. AX-SNAPSHOT-CONTRACT-FIX-01."""
+    return {
+        "snapshot_type": "CONFIG",
+        "threshold_pct": threshold_pct,
+        "mission_mode": "TACTICAL",
+        "n_samples": 1000,
+        "telemetry": {},
+        "decision": None,
+        "hits": None,
+        "P_hit": None,
+        "ci_low": None,
+        "ci_high": None,
+        "impact_points": [],
+        "cep50": None,
+        "confidence_index": None,
+        "wind_vector": None,
+        "target_position": None,
+        "target_radius": None,
+        "random_seed": None,
+        "decision_reason": None,
+        "doctrine_description": None,
+        "impact_velocity_stats": None,
+        "robustness_status": None,
+        "stability_index": None,
+    }
+
+
+class AppState(Enum):
+    """Application state for Operator Mode workflow control."""
+    NO_PAYLOAD = "no_payload"
+    PAYLOAD_SELECTED = "payload_selected"
+    EVALUATED = "evaluated"
+    INVALIDATED = "invalidated"
 
 
 class SimulationWorker(QThread):
@@ -45,10 +93,12 @@ class SimulationWorker(QThread):
 
     def run(self) -> None:
         try:
+            t0 = time.perf_counter()
             snapshot = run_simulation_snapshot(
                 config_override=self.config_override,
                 include_advisory=True,
             )
+            snapshot["compute_time_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
             self.simulation_done.emit(snapshot, self.trigger)
         except Exception as exc:  # pragma: no cover - defensive path
             self.simulation_failed.emit(str(exc), self.trigger)
@@ -64,18 +114,38 @@ class MainWindow(QMainWindow):
         self.current_snapshot_id = None
         self.snapshot_active = False
         self.telemetry_worker = None
+        self.evaluation_worker = None
+        self.telemetry_state = TelemetryState()
+        self.config_state = ConfigState()
         self.simulation_running = False
         self._simulation_worker = None
         self._last_eval_time = None
         self._latest_snapshot = None
         self._snapshot_created_at = None
+        self._last_snapshot_type: str | None = None
         self._last_telemetry = {}
-        self._zoom_by_mode = {"operator": 1.0, "engineering": 1.0}
         self._simulation_started_at = None
         self.auto_evaluate_paused = False
+        self.mission_fig_op = None
+        self.mission_canvas_op = None
+        # Application state control (Operator Mode only)
+        self.app_state = AppState.NO_PAYLOAD
+        self._last_applied_payload_key = None  # Track payload to detect changes
+        self._mission_config_overrides: dict = {
+            "mission_mode": "TACTICAL",
+            "doctrine_mode": "BALANCED",
+            "n_samples": 1000,
+            "random_seed": 42,
+        }
 
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self.auto_evaluate)
+
+        # AX-EXECUTION-MODE-HYBRID-07: hybrid execution controls (Run Once / LIVE)
+        self._execution_mode = "MANUAL"
+        self._live_timer = QTimer(self)
+        self._live_timer.setInterval(200)  # 5 Hz
+        self._live_timer.timeout.connect(self._auto_evaluate)
 
         self.setWindowTitle("AIRDROP-X")
         self.setMinimumSize(1200, 800)
@@ -84,179 +154,820 @@ class MainWindow(QMainWindow):
         self._refresh_mode_buttons()
         self._start_telemetry()
 
+        # Evaluation worker for continuous live mode
+        self.evaluation_worker = EvaluationWorker(
+            self.telemetry_state,
+            self.config_state,
+            parent=self,
+        )
+        self.evaluation_worker.result_ready.connect(self._handle_evaluation_result)
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         root = QHBoxLayout(central)
-        root.setContentsMargins(12, 12, 12, 12)
+        root.setContentsMargins(12, 0, 12, 12)
         root.setSpacing(12)
 
-        # Left mission configuration panel.
-        self.left_panel = MissionConfigPanel(central)
+        # Left panel: kept for data binding but hidden (disabled/removed from UI)
+        self.panel_container = QFrame(central)
+        panel_layout = QHBoxLayout(self.panel_container)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_panel = MissionConfigPanel(self.panel_container)
+        panel_layout.addWidget(self.left_panel)
+        self.panel_container.hide()
         self.system_mode = self.left_panel.system_mode()
         self.left_panel.system_mode_combo.currentTextChanged.connect(self._on_system_mode_changed)
-        root.addWidget(self.left_panel)
 
-        # Right side: controls, plot placeholder, bottom status strip.
+        # Right side: tab navigation and bottom status strip (full width).
         right_container = QWidget(central)
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
 
-        top_controls = QWidget(right_container)
-        top_layout = QHBoxLayout(top_controls)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(8)
-
-        self.operator_btn = QPushButton("OPERATOR", top_controls)
-        self.operator_btn.setCheckable(True)
-        self.operator_btn.clicked.connect(lambda: self._set_mode("operator"))
-        top_layout.addWidget(self.operator_btn)
-
-        self.engineering_btn = QPushButton("ENGINEERING", top_controls)
-        self.engineering_btn.setCheckable(True)
-        self.engineering_btn.clicked.connect(lambda: self._set_mode("engineering"))
-        top_layout.addWidget(self.engineering_btn)
-
-        self.evaluate_btn = QPushButton("Evaluate", top_controls)
-        self.evaluate_btn.clicked.connect(self._on_evaluate_clicked)
-        top_layout.addWidget(self.evaluate_btn)
-
-        self.zoom_label = QLabel("View Zoom", top_controls)
-        top_layout.addWidget(self.zoom_label)
-        self.zoom_spin = QDoubleSpinBox(top_controls)
-        self.zoom_spin.setDecimals(2)
-        self.zoom_spin.setSingleStep(0.05)
-        self.zoom_spin.valueChanged.connect(self._on_zoom_changed)
-        top_layout.addWidget(self.zoom_spin)
-
-        top_layout.addStretch(1)
-        right_layout.addWidget(top_controls)
-
         self.main_tabs = QTabWidget(right_container)
         self.main_tabs.setObjectName("mainTabs")
         self.main_tabs.tabBar().setExpanding(False)
+        self.main_tabs.currentChanged.connect(self._on_tab_changed)
 
-        self.mission_tab, self.mission_fig, self.mission_canvas = self._build_canvas_tab(self.main_tabs)
+        # Mission Overview: Operator mode uses special layout, Engineering uses canvas
+        # Create tab pages with parent=None - Qt will reparent them when addTab() is called
+        self.mission_tab_operator = self._build_mission_tab_operator(None)
+        self.mission_tab_engineering, self.mission_fig, self.mission_canvas = self._build_canvas_tab(None)
+        # Start with operator layout (default mode is operator)
+        self.mission_tab = self.mission_tab_operator
 
-        self.payload_tab, self.payload_fig, self.payload_canvas = self._build_payload_tab(self.main_tabs)
-        self.telemetry_tab, self.telemetry_fig, self.telemetry_canvas = self._build_canvas_tab(self.main_tabs)
+        self.payload_tab = self._build_payload_tab(None)
+        self.telemetry_tab, self.telemetry_fig, self.telemetry_canvas = self._build_canvas_tab(None)
 
-        self.analysis_tab, self.analysis_fig, self.analysis_canvas = self._build_canvas_tab(self.main_tabs)
+        self.analysis_tab, self.analysis_fig, self.analysis_canvas = self._build_canvas_tab(None)
 
-        self.system_tab, self.system_fig, self.system_canvas = self._build_canvas_tab(self.main_tabs)
+        self.system_tab, self.system_fig, self.system_canvas = self._build_canvas_tab(None)
 
-        self.main_tabs.addTab(self.mission_tab, "Mission Overview")
-        self.main_tabs.addTab(self.payload_tab, "Payload Library")
-        self.main_tabs.addTab(self.telemetry_tab, "Sensor & Telemetry")
+        # Add tabs in schematic order: Control Center, Telemetry, Mission Config, Analysis, System Status
+        self.main_tabs.addTab(self.mission_tab, "Control Center")
+        self.main_tabs.addTab(self.telemetry_tab, "Telemetry")
+        self.main_tabs.addTab(self.payload_tab, "Mission Configuration")
+        self.main_tabs.setTabToolTip(self.main_tabs.indexOf(self.payload_tab), "Mission Configuration")
         self.main_tabs.addTab(self.analysis_tab, "Analysis")
         self.main_tabs.addTab(self.system_tab, "System Status")
+        # Default tab: Control Center (index 0)
+        self.main_tabs.setCurrentIndex(0)
         right_layout.addWidget(self.main_tabs, 1)
 
         self.status_strip = StatusStrip(right_container)
         right_layout.addWidget(self.status_strip)
+        # Footer visible only on Analysis tab (hidden on Control Center)
+        self.status_strip.setVisible(
+            self.main_tabs.currentIndex() == self.main_tabs.indexOf(self.analysis_tab)
+        )
 
         root.addWidget(right_container, 1)
+        # Left panel not added to layout - effectively removed from UI
         self.setCentralWidget(central)
         self.left_panel.set_snapshot_id("---")
         self.left_panel.apply_state(self.system_mode, False)
         self.left_panel.auto_eval_combo.currentTextChanged.connect(self._on_auto_eval_changed)
         self.left_panel.threshold_pct.valueChanged.connect(self._on_threshold_changed)
         self.left_panel.random_seed.valueChanged.connect(lambda _: self._render_system_tab())
+        self.threshold_slider.valueChanged.connect(self._on_threshold_slider_changed)
+        self.threshold_spinbox.valueChanged.connect(self._on_threshold_spinbox_changed)
+        self.target_radius_slider.valueChanged.connect(self._on_target_radius_slider_changed)
+        self.target_radius_spinbox.valueChanged.connect(self._on_target_radius_spinbox_changed)
         self.left_panel.num_samples.valueChanged.connect(lambda _: self._render_system_tab())
-        self._sync_zoom_widget_from_mode()
-        self._update_evaluate_button_text()
         self.status_strip.snapshot_label.setText("Snapshot ID: --- | Ready")
         self.status_strip.telemetry_label.setText("Telemetry: LIVE")
         self.left_panel.set_telemetry_health(0.0, 0.0, "LIVE")
         self.left_panel.set_simulation_age(None)
         self.left_panel.set_auto_evaluate_paused(False)
         self.left_panel.telemetry_source_apply_requested.connect(self._on_telemetry_source_apply)
+        # Initialize application state (Operator Mode only) - but don't restrict tabs
+        if self.current_mode == "operator":
+            self.app_state = AppState.NO_PAYLOAD
+        # Seed config_state from defaults; init Control Center spinboxes and MissionConfigTab
+        self._seed_config_state()
+        with self.config_state.lock:
+            cfg = dict(self.config_state.data)
+        th = float(cfg.get("threshold_pct", 75.0))
+        self.threshold_spinbox.setValue(th)
+        self.threshold_slider.setValue(int((th - 50.0) / 0.5))
+        tr = float(cfg.get("target_radius", 5.0))
+        tr_clamp = min(50.0, max(0.5, tr))
+        self.target_radius_spinbox.setValue(tr_clamp)
+        self.target_radius_slider.setValue(int((tr_clamp - 0.5) / 0.5) + 1)
+        self.mission_config_tab.init_from_config(cfg)
+        self._push_config_to_worker()
+        with self.config_state.lock:
+            self._latest_snapshot = {
+                "snapshot_type": "CONFIG",
+                "threshold_pct": float(self.config_state.data.get("threshold_pct", 75.0)),
+                "mission_mode": self.config_state.data.get("mission_mode", "TACTICAL"),
+                "n_samples": int(self.config_state.data.get("n_samples", 1000)),
+                "doctrine_mode": self.config_state.data.get("doctrine_mode", "BALANCED"),
+                "timestamp": time.time(),
+            }
+        # Render all tabs normally
         self._render_mission_tab()
         self._render_analysis_tab()
         self._render_payload_tab()
         self._render_sensor_tab()
         self._render_system_tab()
 
-    def _build_canvas_tab(self, parent: QWidget) -> tuple[QWidget, object, object]:
+    def _build_mission_tab_operator(self, parent: QWidget | None) -> QWidget:
+        """Build Control Center tab: scrollable content, 3-card decision band, plot + advisory column."""
         tab = QWidget(parent)
+        tab.setStyleSheet("background-color: #0d140d;")
+        tab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        root_layout = QVBoxLayout(tab)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        scroll_area = QScrollArea(tab)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll_area.setStyleSheet("QScrollArea { background-color: #0d140d; border: none; }")
+
+        content_widget = QWidget()
+        content_widget.setStyleSheet("background-color: #0d140d;")
+        content_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(6, 6, 6, 6)
+        content_layout.setSpacing(5)
+
+        # ----- STEP 3: TOP DECISION BAND (3 cards horizontal) -----
+        decision_row = QHBoxLayout()
+        decision_row.setSpacing(6)
+        decision_row.addStretch(1)
+
+        # AX-EXECUTION-MODE-HYBRID-07: Execution controls (Run Once / LIVE)
+        execution_group = QFrame(content_widget)
+        execution_group.setObjectName("executionGroup")
+        execution_group.setStyleSheet(
+            "QFrame#executionGroup { border: 1px solid #1a2a1a; border-radius: 6px; background-color: #0d140d; }"
+        )
+        execution_layout = QVBoxLayout(execution_group)
+        execution_layout.setContentsMargins(8, 2, 8, 6)
+        execution_layout.setSpacing(4)
+        exec_label = QLabel("Execution", execution_group)
+        exec_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        exec_label.setStyleSheet("font-size: 16px; color: #22cc22;")
+        execution_layout.addWidget(exec_label)
+        exec_btn_row = QHBoxLayout()
+        exec_btn_row.setSpacing(4)
+        exec_btn_style = "font-size: 14px; color: #22cc22;"
+        self.run_once_btn = QPushButton("Run Once", execution_group)
+        self.run_once_btn.setStyleSheet(exec_btn_style)
+        self.run_once_btn.clicked.connect(self._on_run_once_clicked)
+        self.live_btn = QPushButton("LIVE", execution_group)
+        self.live_btn.setStyleSheet(exec_btn_style)
+        self.live_btn.clicked.connect(self._on_live_clicked)
+        exec_btn_row.addWidget(self.run_once_btn, 1)
+        exec_btn_row.addWidget(self.live_btn, 1)
+        execution_layout.addLayout(exec_btn_row)
+        self.live_mode_label = QLabel("", execution_group)
+        self.live_mode_label.setStyleSheet("font-size: 10px; color: #ff4444; font-weight: bold;")
+        execution_layout.addWidget(self.live_mode_label)
+        self.live_mode_label.hide()
+        decision_row.addWidget(execution_group)
+
+        # 3.1 LEFT CARD — Mission Inputs (Mode, HIT %, HITS)
+        card_inputs = QFrame(content_widget)
+        card_inputs.setObjectName("decisionCardInputs")
+        card_inputs.setStyleSheet("QFrame#decisionCardInputs { border: 1px solid #1a2a1a; border-radius: 6px; background-color: #0d140d; }")
+        card_inputs_layout = QVBoxLayout(card_inputs)
+        card_inputs_layout.setContentsMargins(10, 8, 10, 8)
+        card_inputs_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.mode_value_label = QLabel("Mode:", card_inputs)
+        self.mode_value_label.setObjectName("decisionFieldHighlight")
+        self.mode_value_label.setTextFormat(Qt.TextFormat.RichText)
+        self.p_hit_value_label = QLabel("HIT %:", card_inputs)
+        self.p_hit_value_label.setObjectName("decisionFieldHighlight")
+        self.p_hit_value_label.setTextFormat(Qt.TextFormat.RichText)
+        self.hits_value_label = QLabel("HITS:", card_inputs)
+        self.hits_value_label.setObjectName("decisionFieldHighlight")
+        self.hits_value_label.setTextFormat(Qt.TextFormat.RichText)
+        self.stability_grade_label = QLabel("Stability:", card_inputs)
+        self.stability_grade_label.setObjectName("decisionFieldHighlight")
+        self.stability_grade_label.setTextFormat(Qt.TextFormat.RichText)
+        card_inputs_layout.addWidget(self.mode_value_label)
+        card_inputs_layout.addWidget(self.p_hit_value_label)
+        card_inputs_layout.addWidget(self.hits_value_label)
+        card_inputs_layout.addWidget(self.stability_grade_label)
+        decision_row.addWidget(card_inputs, 1)
+
+        # 3.2 CENTER CARD — Decision State (larger area; READY/PAUSED/DROP/NO DROP)
+        self.decision_state_card = QFrame(content_widget)
+        self.decision_state_card.setObjectName("decisionStateCard")
+        self.decision_state_card.setStyleSheet("QFrame#decisionStateCard { border: 2px solid #1a2a1a; border-radius: 6px; background-color: #0d140d; }")
+        card_state_layout = QVBoxLayout(self.decision_state_card)
+        card_state_layout.setContentsMargins(10, 8, 10, 8)
+        card_state_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.decision_label = QLabel("READY", self.decision_state_card)
+        self.decision_label.setObjectName("decisionLabel")
+        self.margin_label = QLabel("Margin: --", self.decision_state_card)
+        self.margin_label.setObjectName("marginLabel")
+        self.paused_message_label = QLabel("", self.decision_state_card)
+        self.paused_message_label.setObjectName("pausedMessage")
+        self.paused_message_label.setWordWrap(True)
+        self.paused_message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.paused_message_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.paused_message_label.installEventFilter(self)
+        self.paused_message_label.hide()
+        self._paused_target_tab = None
+        self._current_decision = ""
+        self.decision_state_card.installEventFilter(self)
+        self.decision_label.installEventFilter(self)
+        card_state_layout.addWidget(self.decision_label)
+        card_state_layout.addWidget(self.margin_label)
+        card_state_layout.addWidget(self.paused_message_label)
+        decision_row.addWidget(self.decision_state_card, 3)
+
+        # Hidden compute button (preserved for data bindings)
+        self.evaluate_container = QWidget(content_widget)
+        self.evaluate_container.hide()
+        self.evaluate_btn = QPushButton("Compute", self.evaluate_container)
+        self.evaluate_btn.clicked.connect(self._on_evaluate_clicked)
+
+        self._glow_timer = QTimer(self)
+        self._glow_timer.setInterval(80)
+        self._glow_timer.timeout.connect(lambda: None)
+
+        # 3.3 RIGHT CARD — Statistical Summary (95% CI, CI width, Sample count, CEP50)
+        card_stats = QFrame(content_widget)
+        card_stats.setObjectName("decisionCardStats")
+        card_stats.setStyleSheet("QFrame#decisionCardStats { border: 1px solid #1a2a1a; border-radius: 6px; background-color: #0d140d; }")
+        card_stats_layout = QVBoxLayout(card_stats)
+        card_stats_layout.setContentsMargins(10, 8, 10, 8)
+        card_stats_layout.setSpacing(6)
+        self.ci_95_label = QLabel("95% CI:", card_stats)
+        self.ci_95_label.setObjectName("decisionFieldHighlight")
+        self.ci_95_label.setTextFormat(Qt.TextFormat.RichText)
+        self.ci_width_label = QLabel("CI width:", card_stats)
+        self.ci_width_label.setObjectName("decisionFieldHighlight")
+        self.ci_width_label.setTextFormat(Qt.TextFormat.RichText)
+        self.sample_count_label = QLabel("Sample count:", card_stats)
+        self.sample_count_label.setObjectName("decisionFieldHighlight")
+        self.sample_count_label.setTextFormat(Qt.TextFormat.RichText)
+        self.cep50_value_label = QLabel("CEP50:", card_stats)
+        self.cep50_value_label.setObjectName("decisionFieldHighlight")
+        self.cep50_value_label.setTextFormat(Qt.TextFormat.RichText)
+        card_stats_layout.addWidget(self.ci_95_label)
+        card_stats_layout.addWidget(self.ci_width_label)
+        card_stats_layout.addWidget(self.sample_count_label)
+        card_stats_layout.addWidget(self.cep50_value_label)
+        decision_row.addWidget(card_stats, 1)
+
+        # 3.4 NEW SIMULATION CARD — trigger fresh simulation with new config
+        self.new_sim_card = QFrame(content_widget)
+        self.new_sim_card.setObjectName("newSimCard")
+        self.new_sim_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.new_sim_card.installEventFilter(self)
+        new_sim_layout = QVBoxLayout(self.new_sim_card)
+        new_sim_layout.setContentsMargins(10, 8, 10, 8)
+        new_sim_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._new_sim_icon = QLabel("\u27f3", self.new_sim_card)
+        self._new_sim_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._new_sim_icon.setStyleSheet("font-size: 28px; color: #2cff05; border: none; background: transparent;")
+        self._new_sim_title = QLabel("New Simulation", self.new_sim_card)
+        self._new_sim_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._new_sim_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #2cff05; border: none; background: transparent;")
+        self._new_sim_subtitle = QLabel("Reconfigure & Run", self.new_sim_card)
+        self._new_sim_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._new_sim_subtitle.setStyleSheet("font-size: 12px; color: #2cff05; border: none; background: transparent;")
+        new_sim_layout.addWidget(self._new_sim_icon)
+        new_sim_layout.addWidget(self._new_sim_title)
+        new_sim_layout.addWidget(self._new_sim_subtitle)
+        self._apply_new_sim_card_style(hovered=False)
+        self._new_sim_icon.installEventFilter(self)
+        self._new_sim_title.installEventFilter(self)
+        self._new_sim_subtitle.installEventFilter(self)
+        decision_row.addWidget(self.new_sim_card, 1)
+        decision_row.addStretch(1)
+
+        content_layout.addLayout(decision_row)
+
+        # ----- SLIDER ROW — each row: [label | slider] + [spinbox]. Sliders end at Statistical Summary
+        # boundary; red box (New Simulation width) holds spinboxes. No overlap.
+        slider_row = QWidget(content_widget)
+        slider_row.setStyleSheet(
+            "background-color: #0d140d; border: 1px solid #1a2a1a; border-radius: 6px; padding: 6px;"
+        )
+        slider_row.setFixedHeight(44)
+        slider_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        slider_main = QVBoxLayout(slider_row)
+        slider_main.setContentsMargins(6, 2, 6, 2)
+        slider_main.setSpacing(2)
+
+        _slider_style = """
+            QSlider { border: none; background: transparent; }
+            QSlider::groove:horizontal { border: none; height: 6px; background: #1a2a1a; border-radius: 3px; }
+            QSlider::sub-page:horizontal { background: #2cff05; border-radius: 3px; }
+            QSlider::handle:horizontal { width: 12px; margin: -3px 0; background: #2cff05; border-radius: 6px; }
+        """
+        _slider_label_style = "color: #2cff05; font-size: 15px; border: none; background: transparent;"
+        _spinbox_style = "color: #2cff05; border: none; background: transparent; padding: 0 2px; margin-top: -6px; font-size: 15px;"
+
+        # Row 1: label + slider (stretch 5) | spinbox (stretch 1 = red box)
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        left1 = QHBoxLayout()
+        left1.setSpacing(8)
+        th_label = QLabel("Threshold %:", slider_row)
+        th_label.setStyleSheet(_slider_label_style)
+        left1.addWidget(th_label)
+        self.threshold_slider = NoWheelSlider(Qt.Orientation.Horizontal, slider_row)
+        self.threshold_slider.setRange(0, 100)
+        self.threshold_slider.setFixedHeight(22)
+        self.threshold_slider.setStyleSheet(_slider_style)
+        left1.addWidget(self.threshold_slider, 1)
+        row1.addLayout(left1, 5)
+        self.threshold_spinbox = NoWheelDoubleSpinBox(slider_row)
+        self.threshold_spinbox.setRange(50.0, 100.0)
+        self.threshold_spinbox.setSingleStep(0.5)
+        self.threshold_spinbox.setDecimals(1)
+        self.threshold_spinbox.setFixedWidth(96)
+        self.threshold_spinbox.setFixedHeight(22)
+        self.threshold_spinbox.setFrame(False)
+        self.threshold_spinbox.setStyleSheet(_spinbox_style)
+        row1.addWidget(self.threshold_spinbox, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        # Row 2: label + slider (stretch 5) | spinbox (stretch 1 = red box)
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        left2 = QHBoxLayout()
+        left2.setSpacing(8)
+        tr_label = QLabel("Target radius (m):", slider_row)
+        tr_label.setStyleSheet(_slider_label_style)
+        left2.addWidget(tr_label)
+        self.target_radius_slider = NoWheelSlider(Qt.Orientation.Horizontal, slider_row)
+        self.target_radius_slider.setRange(1, 100)
+        self.target_radius_slider.setFixedHeight(22)
+        self.target_radius_slider.setStyleSheet(_slider_style)
+        left2.addWidget(self.target_radius_slider, 1)
+        row2.addLayout(left2, 5)
+        self.target_radius_spinbox = NoWheelDoubleSpinBox(slider_row)
+        self.target_radius_spinbox.setRange(0.5, 50.0)
+        self.target_radius_spinbox.setSingleStep(0.5)
+        self.target_radius_spinbox.setDecimals(1)
+        self.target_radius_spinbox.setFixedWidth(96)
+        self.target_radius_spinbox.setFixedHeight(22)
+        self.target_radius_spinbox.setFrame(False)
+        self.target_radius_spinbox.setStyleSheet(_spinbox_style)
+        row2.addWidget(self.target_radius_spinbox, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        slider_main.addLayout(row1)
+        slider_main.addLayout(row2)
+        content_layout.addWidget(slider_row)
+
+        # ----- STEP 4: MAIN BODY — Plot (left) + Advisory column (right, original position) -----
+        main_body_row = QHBoxLayout()
+        main_body_row.setSpacing(6)
+
+        # 4.1 Plot container with mode toggles overlaid top-right
+        plot_container = QWidget(content_widget)
+        plot_container.setStyleSheet("background-color: #0d140d;")
+        plot_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        plot_grid = QGridLayout(plot_container)
+        plot_grid.setContentsMargins(0, 0, 0, 0)
+        plot_grid.setSpacing(0)
+
+        self.mission_fig_op = qt_bridge.create_figure(figsize=(6.0, 3.2))
+        self.mission_canvas_op = qt_bridge.create_canvas(self.mission_fig_op)
+        self.mission_canvas_op.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.mission_canvas_op.setMinimumHeight(260)
+        self.mission_canvas_op.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mission_canvas_op.installEventFilter(self)
+        plot_grid.addWidget(self.mission_canvas_op, 0, 0)
+
+        mode_toggle_container = QWidget(plot_container)
+        mode_toggle_container.setStyleSheet("background-color: #0d140d; border: 1px solid #1a2a1a; border-radius: 4px;")
+        mode_toggle_container.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        mode_toggle_layout = QHBoxLayout(mode_toggle_container)
+        mode_toggle_layout.setContentsMargins(0, 4, 4, 0)
+        mode_toggle_layout.setSpacing(2)
+        mode_toggle_layout.addStretch(1)
+        btn_style = "font-size: 11px; min-height: 27px; padding: 3px 8px;"
+        self.operator_btn = QPushButton("Operational View", mode_toggle_container)
+        self.operator_btn.setCheckable(True)
+        self.operator_btn.setStyleSheet(btn_style)
+        self.operator_btn.clicked.connect(lambda: self._set_mode("operator"))
+        self.engineering_btn = QPushButton("Analytical View", mode_toggle_container)
+        self.engineering_btn.setCheckable(True)
+        self.engineering_btn.setStyleSheet(btn_style)
+        self.engineering_btn.clicked.connect(lambda: self._set_mode("engineering"))
+        mode_toggle_layout.addWidget(self.operator_btn)
+        mode_toggle_layout.addWidget(self.engineering_btn)
+        plot_grid.addWidget(mode_toggle_container, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+
+        self.mission_nav_toolbar = NavigationToolbar2QT(self.mission_canvas_op, plot_container)
+        self.mission_nav_toolbar.hide()
+        plot_grid.addWidget(self.mission_nav_toolbar, 1, 0)
+
+        main_body_row.addWidget(plot_container, 3)
+
+        # 4.2 Advisory column — right of plot (original position, below New Simulation)
+        advisory_column = QFrame(content_widget)
+        advisory_column.setObjectName("advisoryColumn")
+        advisory_column.setStyleSheet("QFrame#advisoryColumn { border: 1px solid #1a2a1a; border-radius: 6px; background-color: #0a110a; }")
+        advisory_col_layout = QVBoxLayout(advisory_column)
+        advisory_col_layout.setContentsMargins(10, 8, 10, 8)
+        advisory_col_layout.setSpacing(6)
+
+        self.advisory_section_title = QLabel("Advisory", advisory_column)
+        self.advisory_section_title.setObjectName("groupTitle")
+        self.advisory_section_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.advisory_section_title.setStyleSheet("color: #2cff05; font-weight: bold; font-size: 16px;")
+        self.advisory_reason_label = QLabel("Reason: —", advisory_column)
+        self.advisory_reason_label.setObjectName("advisoryFieldHighlight")
+        self.advisory_reason_label.setWordWrap(True)
+        self.advisory_stat_note_label = QLabel("Statistical note: —", advisory_column)
+        self.advisory_stat_note_label.setObjectName("advisoryFieldHighlight")
+        self.advisory_stat_note_label.setWordWrap(True)
+        self.advisory_actions_label = QLabel("Actions: —", advisory_column)
+        self.advisory_actions_label.setObjectName("advisoryFieldHighlight")
+        self.advisory_actions_label.setWordWrap(True)
+        advisory_col_layout.addWidget(self.advisory_section_title)
+        advisory_col_layout.addWidget(self.advisory_reason_label)
+        advisory_col_layout.addWidget(self.advisory_stat_note_label)
+        advisory_col_layout.addWidget(self.advisory_actions_label)
+
+        separator = QFrame(advisory_column)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet("background-color: #1a2a1a; max-height: 1px;")
+        advisory_col_layout.addWidget(separator)
+
+        self.current_factors_title = QLabel("Current Factors", advisory_column)
+        self.current_factors_title.setObjectName("groupTitle")
+        self.current_factors_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.current_factors_title.setStyleSheet("color: #2cff05; font-weight: bold; font-size: 16px;")
+        self.wind_label = QLabel("Wind: <span style='color:#e8e8e8'>--</span>", advisory_column)
+        self.wind_label.setObjectName("advisoryFieldHighlight")
+        self.wind_label.setTextFormat(Qt.TextFormat.RichText)
+        self.altitude_label = QLabel("Altitude: <span style='color:#e8e8e8'>--</span>", advisory_column)
+        self.altitude_label.setObjectName("advisoryFieldHighlight")
+        self.altitude_label.setTextFormat(Qt.TextFormat.RichText)
+        self.speed_label = QLabel("Speed: <span style='color:#e8e8e8'>--</span>", advisory_column)
+        self.speed_label.setObjectName("advisoryFieldHighlight")
+        self.speed_label.setTextFormat(Qt.TextFormat.RichText)
+        advisory_col_layout.addWidget(self.current_factors_title)
+        advisory_col_layout.addWidget(self.wind_label)
+        advisory_col_layout.addWidget(self.altitude_label)
+        advisory_col_layout.addWidget(self.speed_label)
+        advisory_col_layout.addStretch(1)
+
+        main_body_row.addWidget(advisory_column, 1)
+        content_layout.addLayout(main_body_row)
+
+        # Invalidation message (hidden by default; reused for INVALIDATED state)
+        self.invalidation_label = QLabel("Configuration changed. Re-evaluation required.", content_widget)
+        self.invalidation_label.setObjectName("invalidationLabel")
+        self.invalidation_label.setStyleSheet("color: #ffaa00; font-weight: bold;")
+        self.invalidation_label.hide()
+        content_layout.addWidget(self.invalidation_label)
+
+        scroll_area.setWidget(content_widget)
+        root_layout.addWidget(scroll_area)
+        return tab
+
+    def _build_canvas_tab(self, parent: QWidget | None) -> tuple[QWidget, object, object]:
+        tab = QWidget(parent)
+        tab.setStyleSheet("background-color: #0d140d;")
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         fig = qt_bridge.create_figure(figsize=(9.5, 5.8))
         canvas = qt_bridge.create_canvas(fig)
         layout.addWidget(canvas, 1)
+        # Add navigation toolbar (hidden but functional for zoom/pan)
+        nav_toolbar = NavigationToolbar2QT(canvas, tab)
+        nav_toolbar.hide()  # Hide toolbar but keep functionality
+        layout.addWidget(nav_toolbar)
         return tab, fig, canvas
 
-    def _build_payload_tab(self, parent: QWidget) -> tuple[QWidget, object, object]:
-        tab = QWidget(parent)
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
-        toolbar = QWidget(tab)
-        tlay = QHBoxLayout(toolbar)
-        tlay.setContentsMargins(4, 4, 4, 4)
-        tlay.setSpacing(8)
-        tlay.addWidget(QLabel("Category", toolbar))
-        self.payload_category_combo = QComboBox(toolbar)
-        self.payload_category_combo.addItem("All")
-        for c in payload_library.CATEGORIES:
-            self.payload_category_combo.addItem(c)
-        self.payload_category_combo.currentTextChanged.connect(self._on_payload_category_changed)
-        tlay.addWidget(self.payload_category_combo)
-        tlay.addWidget(QLabel("Payload", toolbar))
-        self.payload_name_combo = QComboBox(toolbar)
-        self._refresh_payload_name_combo()
-        tlay.addWidget(self.payload_name_combo)
-        apply_btn = QPushButton("Apply to mission", toolbar)
-        apply_btn.clicked.connect(self._on_payload_apply_clicked)
-        tlay.addWidget(apply_btn)
-        tlay.addStretch(1)
-        layout.addWidget(toolbar)
-        fig = qt_bridge.create_figure(figsize=(9.5, 5.4))
-        canvas = qt_bridge.create_canvas(fig)
-        layout.addWidget(canvas, 1)
-        return tab, fig, canvas
+    def _build_payload_tab(self, parent: QWidget | None) -> QWidget:
+        """Mission Config tab: Mission Mode, accordion, Commit."""
+        scroll = QScrollArea(parent)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background-color: #0d140d;")
+        self.mission_config_tab = MissionConfigTab(scroll)
+        scroll.setWidget(self.mission_config_tab)
+        self.mission_config_tab.config_committed.connect(self._on_mission_config_committed)
+        self.mission_config_tab.dirty_changed.connect(self._on_mission_config_dirty_changed)
+        return scroll
+
+    @Slot(dict)
+    def _on_mission_config_committed(self, cfg: dict) -> None:
+        """Push Mission Config tab values to config_state."""
+        self._mission_config_overrides = dict(cfg)
+        self._push_config_to_worker()
+        with self.config_state.lock:
+            th = float(self.config_state.data.get("threshold_pct", 75.0))
+        base = build_config_snapshot(th)
+        base.update({
+            "mission_mode": cfg.get("mission_mode", "TACTICAL"),
+            "doctrine_mode": cfg.get("doctrine_mode", "BALANCED"),
+            "n_samples": cfg.get("n_samples", 1000),
+            "timestamp": time.time(),
+        })
+        self._latest_snapshot = base
+        self.app_state = AppState.PAYLOAD_SELECTED
+        self._update_summary_strip_after_commit()
+        self.main_tabs.setCurrentWidget(self.mission_tab)
+        self._render_mission_tab()
+        self._update_app_state_ui()
+
+    @Slot(bool)
+    def _on_mission_config_dirty_changed(self, dirty: bool) -> None:
+        """Update Commit button glow (handled inside MissionConfigTab)."""
+        pass
+
+    def _update_summary_strip_after_commit(self) -> None:
+        """Update status strip from snapshot only. Raises RuntimeError if snapshot missing."""
+        if self._latest_snapshot is None:
+            raise RuntimeError("Summary strip requires snapshot; _latest_snapshot is None.")
+        mode = str(self._latest_snapshot.get("mission_mode", "TACTICAL"))
+        n = int(self._latest_snapshot.get("n_samples", 1000))
+        self.status_strip.snapshot_label.setText(
+            f"Config committed | {mode} | n={n}"
+        )
 
     def _refresh_payload_name_combo(self) -> None:
-        category = self.payload_category_combo.currentText() if hasattr(self, "payload_category_combo") and self.payload_category_combo else "All"
-        self.payload_name_combo.blockSignals(True)
-        self.payload_name_combo.clear()
-        if category == "All":
-            for p in payload_library.PAYLOAD_LIBRARY:
-                self.payload_name_combo.addItem(p["name"], p["id"])
-        else:
-            for _, p in payload_library._payloads_for_category(category):
-                self.payload_name_combo.addItem(p["name"], p["id"])
-        self.payload_name_combo.blockSignals(False)
+        pass
 
     def _on_payload_category_changed(self, _text: str) -> None:
-        self._refresh_payload_name_combo()
+        pass
 
     def _on_payload_apply_clicked(self) -> None:
-        payload_id = self.payload_name_combo.currentData()
-        payload_name = self.payload_name_combo.currentText()
-        key = payload_id if payload_id is not None else payload_name
-        mass, cd, area = payload_library.get_default_physics_for_payload(key)
-        self.left_panel.mass.setValue(float(mass))
-        self.left_panel.cd.setValue(float(cd))
-        self.left_panel.area.setValue(float(area))
-        self.status_strip.snapshot_label.setText(
-            f"Payload applied: {payload_name} (mass={mass:.1f} kg, Cd={cd:.2f}, A={area:.4f} m²)"
-        )
+        pass
+
+    def _get_paused_reason(self) -> dict | None:
+        """Return paused info dict {reason, target_tab} or None if ready to run."""
+        if self.app_state == AppState.NO_PAYLOAD:
+            return {"reason": "Configure Payload", "target_tab": self.payload_tab}
+        if self.app_state == AppState.INVALIDATED:
+            return {"reason": "Re-apply Payload", "target_tab": self.payload_tab}
+        if self.simulation_running:
+            return {"reason": "Computing — Standby", "target_tab": None}
+        if self.system_mode == "LIVE" and self.telemetry_worker is None:
+            return {"reason": "Calibrate Telemetry", "target_tab": self.system_tab}
+        return None
 
     def _render_mission_tab(self) -> None:
         snapshot = self._latest_snapshot or {}
+        snapshot_type = snapshot.get("snapshot_type")
+        if snapshot_type not in ("CONFIG", "EVALUATION", "ERROR"):
+            raise RuntimeError("snapshot_type must be 'CONFIG', 'EVALUATION', or 'ERROR'; got %r" % (snapshot_type,))
+
+        if snapshot_type == "ERROR":
+            try:
+                validate_snapshot(snapshot)
+            except ValueError:
+                pass
+            err_msg = snapshot.get("error_message", "Unknown error")
+            self._render_mission_tab_operator_error(err_msg)
+            self._render_analysis_tab()
+            return
+
+        try:
+            validate_snapshot(snapshot)
+        except ValueError as e:
+            self._latest_snapshot = {"snapshot_type": "ERROR", "error_message": str(e)}
+            self._render_mission_tab_operator_error(str(e))
+            self._render_analysis_tab()
+            return
+
+        if snapshot_type == "CONFIG":
+            # CONFIG: READY / PAUSED from operational blockers only
+            paused_info = self._get_paused_reason()
+            decision = "PAUSED" if paused_info else "READY"
+            threshold = float(snapshot.get("threshold_pct", 75.0))
+            self._log_state_transition(snapshot_type)
+            self._render_mission_tab_operator(snapshot, decision, 0.0, 0.0, threshold, None, [], paused_info, config_only=True)
+            return
+
+        # EVALUATION snapshot — snapshot is sole authority (AX-DECISION-BLOCK-STATE-ALIGNMENT-01)
         impact_points = snapshot.get("impact_points", [])
         p_hit = float(snapshot.get("P_hit", 0.0) or 0.0)
         cep50 = float(snapshot.get("cep50", 0.0) or 0.0)
-        threshold = float(self.left_panel.threshold_pct.value())
         advisory = snapshot.get("advisory")
-        decision = "DROP" if (p_hit * 100.0) >= threshold else "NO DROP"
+        threshold = float(snapshot.get("threshold_pct", 75.0))
+        decision = str(snapshot.get("decision", "")).strip().upper()
+        if decision not in ("DROP", "NO DROP"):
+            decision = "DROP" if (p_hit * 100.0) >= threshold else "NO DROP"
         if advisory is not None:
-            decision = str(getattr(advisory, "current_feasibility", decision) or decision)
+            raw = str(getattr(advisory, "current_feasibility", "") or "").strip().upper()
+            if raw in ("DROP", "NO DROP", "NO_DROP"):
+                decision = raw.replace("_", " ")
+        robustness = snapshot.get("robustness_status") or ""
+        paused_info = None
+        self._log_state_transition(snapshot_type)
+        self._render_mission_tab_operator(
+            snapshot, decision, p_hit, cep50, threshold, advisory, impact_points, paused_info,
+            config_only=False, robustness_status=robustness,
+        )
 
-        self.mission_fig.clear()
-        ax = self.mission_fig.add_subplot(1, 1, 1)
+    def _log_state_transition(self, new_type: str) -> None:
+        """AX-OBSERVABILITY-03: Log snapshot type transitions."""
+        old = self._last_snapshot_type
+        if old != new_type:
+            print("STATE TRANSITION:", old, "→", new_type)
+            self._last_snapshot_type = new_type
+
+    def _render_mission_tab_operator_error(self, error_message: str) -> None:
+        """Render ERROR state. AX-ERROR-STATE-HARDEN-03: fully sanitize UI, no stale data."""
+        self.decision_label.setText("SYSTEM ERROR")
+        self.decision_label.setStyleSheet("color: #c83030; font-size: 28px; font-weight: bold; padding: 8px;")
+        self.decision_state_card.setStyleSheet(
+            "QFrame#decisionStateCard { border: 2px solid #c83030; border-radius: 6px; background-color: #0d140d; }"
+        )
+        self.paused_message_label.setText(error_message[:80] + ("..." if len(error_message) > 80 else ""))
+        self.paused_message_label.show()
+        self.margin_label.hide()
+        self._current_decision = "ERROR"
+        # Hide stats panel, clear impact cloud, clear advisory (AX-ERROR-STATE-HARDEN-03)
+        self.p_hit_value_label.setText("HIT %:")
+        self.hits_value_label.setText("HITS:")
+        self.stability_grade_label.setText("Stability:")
+        self.sample_count_label.setText("Sample count:")
+        self.cep50_value_label.setText("CEP50:")
+        self.ci_95_label.setText("95% CI:")
+        self.ci_width_label.setText("CI width:")
+        self.advisory_reason_label.setText("Reason: —")
+        self.advisory_stat_note_label.setText("Statistical note: —")
+        self.advisory_actions_label.setText("Actions: —")
+        self.wind_label.setText("Wind: <span style='color:#e8e8e8'>—</span>")
+        self.altitude_label.setText("Altitude: <span style='color:#e8e8e8'>—</span>")
+        self.speed_label.setText("Speed: <span style='color:#e8e8e8'>—</span>")
+        self.mission_fig_op.clear()
+        self.mission_fig_op.add_subplot(1, 1, 1).set_axis_off()
+        if hasattr(self, "mission_canvas_op") and self.mission_canvas_op is not None:
+            self.mission_canvas_op.draw_idle()
+
+    def _render_mission_tab_operator(
+        self, snapshot, decision, p_hit, cep50, threshold, advisory, impact_points,
+        paused_info=None, config_only: bool = False, robustness_status: str = "",
+    ) -> None:
+        """Render Control Center tab. All data from snapshot only—no left_panel or live telemetry reads."""
+        snapshot_type = snapshot.get("snapshot_type")
+        if snapshot_type not in ("CONFIG", "EVALUATION"):
+            raise RuntimeError("snapshot_type must be 'CONFIG' or 'EVALUATION'; got %r" % (snapshot_type,))
+
+        telem = snapshot.get("telemetry") or {}
+        n_samples = int(snapshot.get("n_samples", 1000)) if snapshot.get("n_samples") is not None else 1000
+        margin_pct = (p_hit * 100.0) - threshold if not config_only else 0.0
+        decision_upper = (decision or "").strip().upper()
+
+        # --- Color map (decision mapping unchanged) ---
+        # Only green tones (DROP, READY) adjusted by mission_mode. Red and yellow unchanged.
+        mission_mode = str(snapshot.get("mission_mode", "TACTICAL")).strip().upper()
+        if mission_mode not in ("TACTICAL", "HUMANITARIAN"):
+            mission_mode = "TACTICAL"
+        base_map = {
+            "DROP":    {"text": "#2cff05", "border": "#2cff05"},
+            "NO DROP": {"text": "#c83030", "border": "#c83030"},
+            "READY":   {"text": "#6aaf6a", "border": "#3a5a3a"},
+            "PAUSED":  {"text": "#d4a017", "border": "#d4a017"},
+        }
+        raw = base_map.get(decision_upper, base_map["READY"])
+        if decision_upper in ("DROP", "READY"):
+            colors = {
+                "text": adjust_color_intensity(raw["text"], mission_mode),
+                "border": adjust_color_intensity(raw["border"], mission_mode),
+            }
+        else:
+            colors = {"text": raw["text"], "border": raw["border"]}
+        self._current_decision = decision_upper
+        # AX-DECISION-STABILITY-01: Append robustness tag for DROP/NO DROP
+        display_text = decision_upper
+        if decision_upper in ("DROP", "NO DROP") and robustness_status:
+            display_text = f"{decision_upper} ({robustness_status})"
+        # READY: 4px border (~2px zoom), static; others: 2px border. No glow animation.
+        border_px = 4 if decision_upper == "READY" else 2
+        self.decision_state_card.setStyleSheet(
+            f"QFrame#decisionStateCard {{ border: {border_px}px solid {colors['border']}; border-radius: 6px; background-color: #0d140d; }}"
+        )
+        if decision_upper == "READY":
+            self.decision_state_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.decision_state_card.setCursor(Qt.CursorShape.ArrowCursor)
+        self.decision_label.setText(display_text)
+        self.decision_label.setStyleSheet(f"color: {colors['text']}; font-size: 32px; font-weight: bold; padding: 8px;")
+
+        # PAUSED / READY caption
+        if decision_upper == "PAUSED" and paused_info:
+            self.margin_label.hide()
+            reason = paused_info.get("reason", "System Paused")
+            self._paused_target_tab = paused_info.get("target_tab")
+            self.paused_message_label.setText(reason)
+            self.paused_message_label.setStyleSheet(
+                f"color: {colors['text']}; font-size: 11px; padding: 4px;"
+            )
+            self.paused_message_label.setToolTip(reason)
+            self.paused_message_label.show()
+        elif decision_upper == "READY":
+            self.margin_label.hide()
+            self._paused_target_tab = None
+            self.paused_message_label.setText("Click to Start Simulation")
+            self.paused_message_label.setToolTip("Click to start simulation")
+            self.paused_message_label.setStyleSheet(
+                f"color: {colors['text']}; font-size: 11px; padding: 4px;"
+            )
+            self.paused_message_label.show()
+        else:
+            self.paused_message_label.hide()
+            self._paused_target_tab = None
+            self.margin_label.show()
+
+        # Left card: Mode, HIT %, HITS, Stability (heading green, value off-white)
+        _v = "color:#e8e8e8"
+        mode_display = "Operational" if self.current_mode == "operator" else "Analytical"
+        self.mode_value_label.setText(f"Mode: <span style='{_v}'>{mode_display}</span>")
+        if config_only:
+            self.p_hit_value_label.setText("HIT %:")
+            self.hits_value_label.setText("HITS:")
+            self.margin_label.hide()
+            self.stability_grade_label.setText("Stability:")
+            self.sample_count_label.setText("Sample count:")
+            self.cep50_value_label.setText("CEP50:")
+            self.ci_95_label.setText("95% CI:")
+            self.ci_width_label.setText("CI width:")
+        elif snapshot_type == "EVALUATION":
+            print("FIELD NAME HIT % SOURCE:", "p_hit (snapshot.P_hit)")
+            print("FIELD VALUE HIT %:", p_hit * 100.0)
+            self.p_hit_value_label.setText(f"HIT %: <span style='{_v}'>{p_hit * 100.0:.1f}%</span>")
+            hits_val = snapshot.get("hits")
+            n_val = int(snapshot.get("n_samples", 0) or n_samples or 0)
+            if hits_val is not None and n_val > 0:
+                hits_display = int(hits_val)
+                print("FIELD NAME HITS SOURCE:", "snapshot.hits, snapshot.n_samples")
+                print("FIELD VALUE HITS:", hits_display, "/", n_val)
+                self.hits_value_label.setText(f"HITS: <span style='{_v}'>{hits_display}/{n_val}</span>")
+            else:
+                self.hits_value_label.setText(f"HITS: <span style='{_v}'>—/—</span>")
+            self.margin_label.setText(f"Margin: {margin_pct:+.1f}%")
+            if margin_pct >= 0:
+                margin_color = adjust_color_intensity("#2cff05", mission_mode)
+            else:
+                margin_color = "#c83030"  # Red unchanged
+            self.margin_label.setStyleSheet(f"color: {margin_color};")
+            ci_val = float(snapshot.get("confidence_index") or 0.5)
+            stab = "High" if ci_val >= 0.75 else ("Moderate" if ci_val >= 0.50 else "Low")
+            print("FIELD NAME Stability SOURCE:", "snapshot.confidence_index")
+            print("FIELD VALUE Stability:", stab)
+            self.stability_grade_label.setText(f"Stability: <span style='{_v}'>{stab}</span>")
+            print("FIELD NAME Sample count SOURCE:", "snapshot.n_samples")
+            print("FIELD VALUE Sample count:", n_samples)
+            self.sample_count_label.setText(f"Sample count: <span style='{_v}'>{n_samples}</span>")
+            print("FIELD NAME CEP50 SOURCE:", "snapshot.cep50")
+            print("FIELD VALUE CEP50:", cep50)
+            self.cep50_value_label.setText(f"CEP50: <span style='{_v}'>{cep50:.2f} m</span>")
+            # Wilson CI from snapshot only (no normal approximation)
+            ci_lo = snapshot.get("ci_low")
+            ci_hi = snapshot.get("ci_high")
+            if ci_lo is not None and ci_hi is not None:
+                ci_w = (ci_hi - ci_lo) * 100.0
+                print("FIELD NAME 95% CI SOURCE:", "snapshot.ci_low, snapshot.ci_high")
+                print("FIELD VALUE 95% CI:", ci_lo, "-", ci_hi)
+                print("FIELD NAME CI width SOURCE:", "(ci_high - ci_low) * 100")
+                print("FIELD VALUE CI width:", ci_w)
+                self.ci_95_label.setText(f"95% CI: <span style='{_v}'>{ci_lo*100:.1f}–{ci_hi*100:.1f}%</span>")
+                self.ci_width_label.setText(f"CI width: <span style='{_v}'>{ci_w:.1f}%</span>")
+            else:
+                self.ci_95_label.setText("95% CI: —")
+                self.ci_width_label.setText("CI width: —")
+        else:
+            self.p_hit_value_label.setText("HIT %:")
+            self.hits_value_label.setText("HITS:")
+            self.stability_grade_label.setText("Stability:")
+            self.sample_count_label.setText("Sample count:")
+            self.cep50_value_label.setText("CEP50:")
+            self.ci_95_label.setText("95% CI:")
+            self.ci_width_label.setText("CI width:")
+
+        # Impact plot
+        self.mission_fig_op.clear()
+        ax = self.mission_fig_op.add_subplot(1, 1, 1)
+        wind_vec = snapshot.get("wind_vector")
+        if wind_vec is not None and len(wind_vec) >= 2:
+            wv = (float(wind_vec[0]), float(wind_vec[1]))
+        else:
+            wx = float(telem.get("wind_x", 0.0))
+            wv = (wx, float(telem.get("wind_y", 0.0)))
+        release_pt = (
+            float(telem.get("x", 0.0)),
+            float(telem.get("y", 0.0)),
+        )
+        tpos = snapshot.get("target_position")
+        if tpos is not None and len(tpos) >= 2:
+            tp = (float(tpos[0]), float(tpos[1]))
+        else:
+            tp = release_pt
+        trad = float(snapshot.get("target_radius", 10.0) or 10.0)
+        rseed = snapshot.get("random_seed")
+        rseed = int(rseed) if rseed is not None else None
         mission_overview_tab_renderer.render(
             ax,
             decision=decision,
@@ -266,33 +977,129 @@ class MainWindow(QMainWindow):
             mode="Balanced",
             impact_points=impact_points,
             confidence_index=snapshot.get("confidence_index"),
-            target_position=snapshot.get(
-                "target_position",
-                (float(self.left_panel.target_x.value()), float(self.left_panel.target_y.value())),
-            ),
-            target_radius=float(snapshot.get("target_radius", self.left_panel.target_radius.value()) or 0.0),
+            target_position=tp,
+            target_radius=trad,
             advisory_result=advisory,
-            release_point=(float(self.left_panel.uav_x.value()), float(self.left_panel.uav_y.value())),
-            wind_vector=(float(self.left_panel.wind_x.value()), 0.0),
-            dispersion_mode=self.current_mode,
-            view_zoom=float(self._zoom_by_mode.get(self.current_mode, 1.0)),
+            release_point=release_pt,
+            wind_vector=wv,
+            dispersion_mode=self.current_mode if self.current_mode == "engineering" else "operator",
+            view_zoom=1.0,
             snapshot_timestamp=(
                 self._snapshot_created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if self._snapshot_created_at is not None
                 else None
             ),
-            random_seed=int(self.left_panel.random_seed.value()),
-            n_samples=int(self.left_panel.num_samples.value()),
+            random_seed=rseed,
+            n_samples=n_samples,
         )
-        try:
-            self.mission_fig.tight_layout()
-        except Exception:
-            pass
-        self.mission_canvas.draw_idle()
+        self.mission_fig_op.subplots_adjust(left=0.09, right=0.99, top=0.97, bottom=0.08)
+        self.mission_canvas_op.draw_idle()
+
+        # Advisory column (doctrine reason when available, else advisory)
+        decision_reason = snapshot.get("decision_reason")
+        doctrine_desc = snapshot.get("doctrine_description")
+        if advisory:
+            self.advisory_reason_label.setText(f"Reason: {advisory.current_feasibility}")
+            self.advisory_stat_note_label.setText(f"Statistical note: {getattr(advisory, 'trend_summary', '—')}")
+            suggested = getattr(advisory, "suggested_direction", "Hold Position")
+            self.advisory_actions_label.setText(f"Actions: • {suggested}")
+        elif decision_reason:
+            self.advisory_reason_label.setText(f"Reason: {decision_reason}")
+            self.advisory_stat_note_label.setText(f"Doctrine: {doctrine_desc or '—'}")
+            self.advisory_actions_label.setText("Actions: —")
+        else:
+            self.advisory_reason_label.setText("Reason: —")
+            self.advisory_stat_note_label.setText("Statistical note: —")
+            self.advisory_actions_label.setText("Actions: —")
+
+        # Current Factors (from snapshot telemetry only)
+        wind_x = float(telem.get("wind_x", 0.0))
+        altitude = float(telem.get("z", 100.0))
+        speed = float(telem.get("vx", 20.0))
+        _val = "color:#e8e8e8"
+        self.wind_label.setText(f"Wind: <span style='{_val}'>{wind_x:.2f} m/s</span>")
+        self.altitude_label.setText(f"Altitude: <span style='{_val}'>{altitude:.0f} m</span>")
+        self.speed_label.setText(f"Speed: <span style='{_val}'>{speed:.1f} m/s</span>")
+
+    def _apply_new_sim_card_style(self, hovered: bool = False) -> None:
+        if hovered:
+            border = "2px solid #2cff05"
+            bg = "#0f1a0f"
+            self._new_sim_icon.setStyleSheet("font-size: 29px; color: #2cff05; border: none; background: transparent;")
+            self._new_sim_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2cff05; border: none; background: transparent;")
+            self._new_sim_subtitle.setStyleSheet("font-size: 13px; color: #2cff05; border: none; background: transparent;")
+            glow = QGraphicsDropShadowEffect(self.new_sim_card)
+            glow.setBlurRadius(14)
+            glow.setColor(QColor(44, 255, 5, 90))
+            glow.setOffset(0, 0)
+            self.new_sim_card.setGraphicsEffect(glow)
+        else:
+            border = "1px solid #1a2a1a"
+            bg = "#0d140d"
+            self._new_sim_icon.setStyleSheet("font-size: 28px; color: #2cff05; border: none; background: transparent;")
+            self._new_sim_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #2cff05; border: none; background: transparent;")
+            self._new_sim_subtitle.setStyleSheet("font-size: 12px; color: #2cff05; border: none; background: transparent;")
+            self.new_sim_card.setGraphicsEffect(None)
+        self.new_sim_card.setStyleSheet(
+            f"QFrame#newSimCard {{ border: {border}; border-radius: 6px; background-color: {bg}; }}"
+        )
+
+    def _on_run_once_clicked(self) -> None:
+        """AX-EXECUTION-MODE-HYBRID-07: Run single simulation in MANUAL mode."""
+        if self.simulation_running:
+            return
+        self._execution_mode = "MANUAL"
+        self._live_timer.stop()
+        self._start_simulation(trigger="run_once")
+
+    def _on_live_clicked(self) -> None:
+        """AX-EXECUTION-MODE-HYBRID-07: Toggle LIVE / MANUAL execution mode."""
+        if self._execution_mode == "MANUAL":
+            self._execution_mode = "LIVE"
+            self.live_btn.setText("STOP")
+            self.live_btn.setStyleSheet("font-size: 14px; color: white; background-color: #cc3333;")
+            self.run_once_btn.setEnabled(False)
+            self.live_mode_label.setText("LIVE MODE ACTIVE")
+            self.live_mode_label.show()
+            self._live_timer.start()
+        else:
+            self._execution_mode = "MANUAL"
+            self.live_btn.setText("LIVE")
+            self.live_btn.setStyleSheet("font-size: 14px; color: #22cc22;")
+            self.run_once_btn.setEnabled(True)
+            self.live_mode_label.hide()
+            self._live_timer.stop()
+
+    def _auto_evaluate(self) -> None:
+        """AX-EXECUTION-MODE-HYBRID-07: Timer callback for LIVE mode — start simulation when idle."""
+        if self._execution_mode != "LIVE":
+            return
+        if self.simulation_running:
+            return
+        self._start_simulation(trigger="live_timer")
+
+    def _on_new_simulation_clicked(self) -> None:
+        """Unlock current snapshot and navigate to Mission Config for reconfiguration."""
+        self.left_panel.set_read_only(False)
+        self.snapshot_active = False
+        self.app_state = AppState.PAYLOAD_SELECTED
+        # Preserve threshold_pct from config_state (packet-driven invariant; no UI read during render)
+        with self.config_state.lock:
+            th = float(self.config_state.data.get("threshold_pct", 75.0))
+        self._latest_snapshot = build_config_snapshot(th)
+        self._snapshot_created_at = None
+        self.current_snapshot_id = None
+        self._update_app_state_ui()
+        self.main_tabs.setCurrentWidget(self.payload_tab)
+        self.status_strip.snapshot_label.setText("Snapshot ID: --- | New Simulation — Configure & Run")
+        self._render_mission_tab()
 
     def _render_analysis_tab(self) -> None:
         snapshot = self._latest_snapshot or {}
         impact_points = snapshot.get("impact_points", [])
+        # --- PHASE 5: Analytical cloud trace ---
+        print("ANALYTICAL MODE:", self.current_mode)
+        print("IMPACT COUNT:", len(impact_points))
         p_hit = float(snapshot.get("P_hit", 0.0) or 0.0)
         cep50 = float(snapshot.get("cep50", 0.0) or 0.0)
 
@@ -316,9 +1123,9 @@ class MainWindow(QMainWindow):
             target_hit_percentage=p_hit * 100.0,
             impact_velocity_stats=snapshot.get("impact_velocity_stats"),
             max_safe_impact_speed=None,
-            dispersion_mode=self.current_mode,
-            view_zoom=float(self._zoom_by_mode.get(self.current_mode, 1.0)),
-            snapshot_timestamp=(
+                dispersion_mode=self.current_mode,
+                view_zoom=1.0,  # Fixed zoom, use matplotlib toolbar for zooming
+                snapshot_timestamp=(
                 self._snapshot_created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if self._snapshot_created_at is not None
                 else None
@@ -333,10 +1140,8 @@ class MainWindow(QMainWindow):
         self.analysis_canvas.draw_idle()
 
     def _render_payload_tab(self) -> None:
-        self.payload_fig.clear()
-        ax = self.payload_fig.add_subplot(1, 1, 1)
-        payload_library.render(ax, self.payload_fig, interactive=False)
-        self.payload_canvas.draw_idle()
+        """Mission Config tab: form-based; no canvas render."""
+        pass
 
     def _render_sensor_tab(self) -> None:
         self.telemetry_fig.clear()
@@ -400,17 +1205,47 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(
             """
             QMainWindow {
-                background-color: #050905;
+                background-color: #0d140d;
             }
             QWidget {
                 color: #86a886;
+                background-color: #0d140d;
                 font-family: Consolas, "Courier New", monospace;
                 font-size: 12px;
             }
-            QWidget#leftPanel, QFrame#plotPlaceholder, QFrame#statusStrip {
+            QScrollArea {
+                background-color: #0d140d;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: #0d140d;
+                width: 8px;
+                border: none;
+            }
+            QScrollBar::handle:vertical {
+                background: #1a2a1a;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QWidget#leftPanel, QFrame#plotPlaceholder, QFrame#statusStrip,
+            QFrame#decisionCardInputs, QFrame#decisionStateCard, QFrame#decisionCardStats,
+            QFrame#advisoryColumn {
                 background-color: #0a110a;
                 border: 1px solid #1c2d1c;
                 border-radius: 4px;
+            }
+            QLabel#decisionLabel {
+                font-size: 32px;
+                font-weight: bold;
+                color: #6aaf6a;
+                padding: 8px;
+            }
+            QLabel#pausedMessage {
+                color: #d4a017;
+                font-size: 11px;
             }
             QLabel#panelTitle {
                 color: #2cff05;
@@ -428,6 +1263,14 @@ class MainWindow(QMainWindow):
             }
             QLabel#panelFieldValue {
                 color: #6c8f6a;
+            }
+            QLabel#advisoryFieldHighlight {
+                color: #5ed85e;
+                font-size: 14px;
+            }
+            QLabel#decisionFieldHighlight {
+                color: #5ed85e;
+                font-size: 14px;
             }
             QLabel#panelSubtitle, QLabel#placeholderLine, QLabel#statusLabel {
                 color: #6c8f6a;
@@ -455,29 +1298,37 @@ class MainWindow(QMainWindow):
                 selection-background-color: #133013;
             }
             QTabWidget#mainTabs::pane {
-                border: 1px solid #1a2a1a;
-                background: #0a110a;
-                margin-top: 6px;
+                border: none;
+                background: #0d140d;
+                margin-top: 0;
             }
             QTabWidget#mainTabs::tab-bar {
                 alignment: center;
             }
             QTabBar::tab {
-                min-width: 150px;
-                min-height: 34px;
-                padding: 8px 12px;
-                margin-right: 8px;
-                background-color: #0b120b;
+                min-width: 140px;
+                min-height: 36px;
+                padding: 8px 14px;
+                margin-right: 6px;
+                background-color: #0d140d;
                 color: #6c8f6a;
                 border: 1px solid #1a2a1a;
-                border-bottom: none;
+                border-radius: 6px;
+                border-bottom: 1px solid #1a2a1a;
                 font-weight: normal;
+                font-size: 15px;
             }
             QTabBar::tab:selected {
+                background-color: #0d140d;
                 color: #2cff05;
+                font-size: 15px;
                 border: 1px solid #2cff05;
-                border-bottom: 2px solid #2cff05;
+                border-radius: 6px;
+                border-bottom: 1px solid #2cff05;
                 font-weight: bold;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #132013;
             }
             QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
                 width: 14px;
@@ -494,9 +1345,19 @@ class MainWindow(QMainWindow):
         )
 
     def _set_mode(self, mode: str) -> None:
+        """Change UI mode (operator/engineering) - only affects UI density, does not reset engine/snapshot."""
         self.current_mode = mode
         self._refresh_mode_buttons()
-        self._sync_zoom_widget_from_mode()
+        self._switch_mission_tab_layout()
+        self._update_left_panel_visibility()
+        # Re-initialize app state if switching to Operator Mode
+        if mode == "operator":
+            if self.app_state == AppState.NO_PAYLOAD:
+                self._initialize_app_state()
+            else:
+                self._update_app_state_ui()
+        else:
+            pass
         self._render_mission_tab()
         self._render_analysis_tab()
         if self.snapshot_active:
@@ -508,40 +1369,111 @@ class MainWindow(QMainWindow):
                 f"Snapshot ID: {self.current_snapshot_id or '---'} | Editable | Mode: {mode.title()}"
             )
 
+    def _switch_mission_tab_layout(self) -> None:
+        """No tab swap — Control Center always uses operator layout. Mode only changes plot rendering."""
+        pass
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Handle tab change - update left panel visibility and footer (status strip)."""
+        self._update_left_panel_visibility()
+        # Show status strip (Snapshot ID, Telemetry) only on Analysis tab
+        show_footer = index == self.main_tabs.indexOf(self.analysis_tab)
+        self.status_strip.setVisible(show_footer)
+
+    def _update_left_panel_visibility(self) -> None:
+        """Left panel removed from UI - no-op."""
+        pass
+
     def _refresh_mode_buttons(self) -> None:
+        if not hasattr(self, 'operator_btn') or not hasattr(self, 'engineering_btn'):
+            return  # Buttons not yet created
         is_operator = self.current_mode == "operator"
         self.operator_btn.setChecked(is_operator)
         self.engineering_btn.setChecked(not is_operator)
 
-    def _sync_zoom_widget_from_mode(self) -> None:
-        if self.current_mode == "engineering":
-            mn, mx = 0.60, 1.80
-        else:
-            mn, mx = 0.60, 2.20
-        value = float(self._zoom_by_mode.get(self.current_mode, 1.0))
-        value = max(mn, min(mx, value))
-        self.zoom_spin.blockSignals(True)
-        self.zoom_spin.setRange(mn, mx)
-        self.zoom_spin.setValue(value)
-        self.zoom_spin.blockSignals(False)
+    def _initialize_app_state(self) -> None:
+        """Initialize application state on startup (Operator Mode only)."""
+        if self.current_mode == "operator":
+            self.app_state = AppState.NO_PAYLOAD
+            self._update_app_state_ui()
+            # Default tab index 0 is Control Center
+            self.main_tabs.setCurrentIndex(0)  # Control Center is first tab
 
-    @Slot(float)
-    def _on_zoom_changed(self, value: float) -> None:
-        self._zoom_by_mode[self.current_mode] = float(value)
+    def _update_app_state_ui(self) -> None:
+        """Update UI based on current application state (Operator Mode only)."""
+        if self.current_mode != "operator":
+            return
+        if self.app_state == AppState.PAYLOAD_SELECTED:
+            if hasattr(self, 'invalidation_label'):
+                self.invalidation_label.hide()
+        elif self.app_state == AppState.EVALUATED:
+            if hasattr(self, 'invalidation_label'):
+                self.invalidation_label.hide()
+        elif self.app_state == AppState.INVALIDATED:
+            if hasattr(self, 'invalidation_label'):
+                self.invalidation_label.show()
+            self._disable_decision_display()
+
+    def _reset_decision_display(self) -> None:
+        """Reset decision display — triggers a fresh render which will resolve to READY or PAUSED."""
         self._render_mission_tab()
-        self._render_analysis_tab()
+
+    def _disable_decision_display(self) -> None:
+        """Disable decision result display — re-render resolves to PAUSED."""
+        self._render_mission_tab()
 
     def _update_evaluate_button_text(self) -> None:
-        if self.snapshot_active:
-            self.evaluate_btn.setText("Modify & Re-run")
-            return
-        if self.system_mode == "LIVE":
-            self.evaluate_btn.setText("Evaluate with Current Telemetry")
-            return
-        self.evaluate_btn.setText("Evaluate Simulation")
+        # Evaluate button removed from header - method kept for compatibility but does nothing
+        pass
 
     @Slot(float)
     def _on_threshold_changed(self, _value: float) -> None:
+        self._render_mission_tab()
+
+    def _on_threshold_slider_changed(self, value: int) -> None:
+        val = 50.0 + value * 0.5
+        self.threshold_spinbox.blockSignals(True)
+        self.threshold_spinbox.setValue(val)
+        self.threshold_spinbox.blockSignals(False)
+        self.left_panel.threshold_pct.blockSignals(True)
+        self.left_panel.threshold_pct.setValue(val)
+        self.left_panel.threshold_pct.blockSignals(False)
+        with self.config_state.lock:
+            self.config_state.data["threshold_pct"] = val
+        self._render_mission_tab()
+
+    def _on_threshold_spinbox_changed(self, value: float) -> None:
+        self.threshold_slider.blockSignals(True)
+        self.threshold_slider.setValue(int((value - 50.0) / 0.5))
+        self.threshold_slider.blockSignals(False)
+        self.left_panel.threshold_pct.blockSignals(True)
+        self.left_panel.threshold_pct.setValue(value)
+        self.left_panel.threshold_pct.blockSignals(False)
+        with self.config_state.lock:
+            self.config_state.data["threshold_pct"] = value
+        self._render_mission_tab()
+
+    def _on_target_radius_slider_changed(self, value: int) -> None:
+        val = 0.5 + (value - 1) * 0.5
+        self.target_radius_spinbox.blockSignals(True)
+        self.target_radius_spinbox.setValue(val)
+        self.target_radius_spinbox.blockSignals(False)
+        self.left_panel.target_radius.blockSignals(True)
+        self.left_panel.target_radius.setValue(val)
+        self.left_panel.target_radius.blockSignals(False)
+        with self.config_state.lock:
+            self.config_state.data["target_radius"] = val
+        self._render_mission_tab()
+
+    def _on_target_radius_spinbox_changed(self, value: float) -> None:
+        self.target_radius_slider.blockSignals(True)
+        self.target_radius_slider.setValue(int((value - 0.5) / 0.5) + 1)
+        self.target_radius_slider.blockSignals(False)
+        self.left_panel.target_radius.blockSignals(True)
+        self.left_panel.target_radius.setValue(value)
+        self.left_panel.target_radius.blockSignals(False)
+        with self.config_state.lock:
+            self.config_state.data["target_radius"] = value
         self._render_mission_tab()
 
     @Slot(str)
@@ -561,8 +1493,11 @@ class MainWindow(QMainWindow):
         self.left_panel.set_auto_evaluate_paused(False)
         if next_mode != "LIVE":
             self.auto_timer.stop()
+            self._stop_evaluation_worker()
         else:
             self._apply_live_telemetry_to_panel()
+            self._push_config_to_worker()
+            self._start_evaluation_worker()
         self._update_evaluate_button_text()
         self._render_sensor_tab()
 
@@ -599,6 +1534,8 @@ class MainWindow(QMainWindow):
         self._start_simulation(trigger="auto")
 
     def _on_evaluate_clicked(self) -> None:
+        # No restrictions - allow evaluate anytime
+        
         if self.simulation_running:
             self.status_strip.snapshot_label.setText("Snapshot: Simulation already running...")
             return
@@ -622,9 +1559,16 @@ class MainWindow(QMainWindow):
     def _start_simulation(self, trigger: str) -> None:
         if self.simulation_running:
             return
+        # --- PHASE 6: State hash check before simulation ---
+        config_state = dict(getattr(self.config_state, "data", {}))
+        print("CONFIG HASH:", hash(str(config_state)))
+        print("EVAL HASH:", hash(str(None)))
+        print("SNAPSHOT HASH:", hash(str(self._latest_snapshot or {})))
         self.simulation_running = True
         self._simulation_started_at = time.time()
-        cfg = self.left_panel.get_config_values()
+        self._push_config_to_worker()  # Ensure config_state is current before run
+        with self.config_state.lock:
+            cfg = dict(self.config_state.data)
         worker = SimulationWorker(cfg, trigger, self)
         worker.simulation_done.connect(self._on_simulation_done)
         worker.simulation_failed.connect(self._on_simulation_failed)
@@ -634,7 +1578,16 @@ class MainWindow(QMainWindow):
 
     @Slot(dict, str)
     def _on_simulation_done(self, snapshot: dict, trigger: str) -> None:
-        self._latest_snapshot = dict(snapshot or {})
+        t0 = time.perf_counter()
+        last_snapshot = self._latest_snapshot or {}
+        previous_decision = last_snapshot.get("decision") if last_snapshot.get("snapshot_type") == "EVALUATION" else None
+        snap = dict(snapshot or {})
+        snap["snapshot_type"] = "EVALUATION"
+        snap.setdefault("compute_time_ms", None)
+        enrich_evaluation_snapshot(snap, previous_decision)
+        with self.config_state.lock:
+            snap["mission_mode"] = self.config_state.data.get("mission_mode", "TACTICAL")
+        self._latest_snapshot = snap
         self._snapshot_created_at = datetime.now()
         self.current_snapshot_id = self._snapshot_created_at.strftime("AX-%Y%m%d-%H%M%S")
         self._last_eval_time = time.time()
@@ -643,9 +1596,16 @@ class MainWindow(QMainWindow):
             run_duration_sec = max(0.0, self._last_eval_time - self._simulation_started_at)
         self._update_simulation_age()
         self.left_panel.set_snapshot_id(self.current_snapshot_id)
+        
+        # Update application state (Operator Mode only)
+        if self.current_mode == "operator" and trigger == "manual_lock":
+            self.app_state = AppState.EVALUATED
+            self._update_app_state_ui()
+        
         self._render_mission_tab()
         self._render_analysis_tab()
         self._render_system_tab()
+        snap["render_time_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
 
         if (
             run_duration_sec is not None
@@ -672,6 +1632,18 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if trigger == "live_timer":
+            self.status_strip.snapshot_label.setText(
+                f"Snapshot ID: {self.current_snapshot_id} | LIVE | P_hit: {float(snapshot.get('P_hit', 0.0)) * 100.0:.1f}%"
+            )
+            return
+
+        if trigger == "run_once":
+            self.status_strip.snapshot_label.setText(
+                f"Snapshot ID: {self.current_snapshot_id} | Run Once | P_hit: {float(snapshot.get('P_hit', 0.0)) * 100.0:.1f}%"
+            )
+            return
+
         self.status_strip.snapshot_label.setText(
             f"Snapshot ID: {self.current_snapshot_id} | Updated"
         )
@@ -679,7 +1651,10 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_simulation_failed(self, error: str, trigger: str) -> None:  # noqa: ARG002
         short = (error or "unknown error").strip()
+        self._latest_snapshot = {"snapshot_type": "ERROR", "error_message": short[:200]}
+        self._log_state_transition("ERROR")
         self.status_strip.snapshot_label.setText(f"Snapshot: Failed ({short[:72]})")
+        self._render_mission_tab()
 
     @Slot()
     def _on_simulation_finished(self) -> None:
@@ -723,24 +1698,214 @@ class MainWindow(QMainWindow):
         self.left_panel.wind_x.setValue(float(data.get("wind_x", self.left_panel.wind_x.value())))
         self.left_panel.wind_std.setValue(float(data.get("wind_std", self.left_panel.wind_std.value())))
 
+    def _seed_config_state(self) -> None:
+        """Seed config_state with defaults from mission_configs. Called once at init."""
+        from configs import mission_configs as cfg
+        with self.config_state.lock:
+            self.config_state.data = {
+                "mass": float(cfg.mass),
+                "cd": float(cfg.Cd),
+                "area": float(cfg.A),
+                "uav_x": float(cfg.uav_pos[0]),
+                "uav_y": float(cfg.uav_pos[1]),
+                "uav_altitude": float(cfg.uav_pos[2]),
+                "uav_vx": float(cfg.uav_vel[0]),
+                "uav_vy": float(cfg.uav_vel[1]) if len(cfg.uav_vel) > 1 else 0.0,
+                "target_x": float(cfg.target_pos[0]),
+                "target_y": float(cfg.target_pos[1]),
+                "target_radius": float(cfg.target_radius),
+                "wind_x": float(cfg.wind_mean[0]),
+                "wind_std": float(cfg.wind_std),
+                "n_samples": int(self._mission_config_overrides.get("n_samples", 1000)),
+                "random_seed": int(self._mission_config_overrides.get("random_seed", cfg.RANDOM_SEED)),
+                "threshold_pct": float(cfg.THRESHOLD_SLIDER_INIT),
+                "doctrine_mode": str(self._mission_config_overrides.get("doctrine_mode", "BALANCED")),
+                "mission_mode": str(self._mission_config_overrides.get("mission_mode", "TACTICAL")),
+            }
+
+    def _push_config_to_worker(self) -> None:
+        """Push config to worker. Uses config_state as base; MissionConfigTab overrides on commit."""
+        with self.config_state.lock:
+            cfg = dict(self.config_state.data)
+        cfg.update(self._mission_config_overrides)
+        cfg["mission_mode"] = str(cfg.get("mission_mode", "TACTICAL")).strip().upper()
+        if cfg["mission_mode"] not in ("TACTICAL", "HUMANITARIAN"):
+            cfg["mission_mode"] = "TACTICAL"
+        cfg["doctrine_mode"] = str(cfg.get("doctrine_mode", "BALANCED")).strip().upper()
+        cfg["n_samples"] = int(cfg.get("n_samples", 1000))
+        cfg["random_seed"] = int(cfg.get("random_seed", 42))
+        cfg["mass"] = float(cfg.get("mass", 1.0))
+        cfg["cd"] = float(cfg.get("cd", 0.47))
+        cfg["area"] = float(cfg.get("area", 0.01))
+        with self.config_state.lock:
+            self.config_state.data = dict(cfg)
+
+    def _start_evaluation_worker(self) -> None:
+        """Start continuous evaluation worker (LIVE mode)."""
+        if self.evaluation_worker is None:
+            return
+        if self.evaluation_worker.isRunning():
+            return
+        self.evaluation_worker.running = True
+        self.evaluation_worker.start()
+
+    def _stop_evaluation_worker(self) -> None:
+        """Stop continuous evaluation worker."""
+        if self.evaluation_worker is None:
+            return
+        self.evaluation_worker.running = False
+        self.evaluation_worker.wait(2000)
+
+    @Slot(dict)
+    def _handle_evaluation_result(self, data: dict) -> None:
+        """Atomic UI update from evaluation worker result."""
+        if self.system_mode != "LIVE":
+            return
+        impact_points = data.get("impact_points", [])
+        p_hit = float(data.get("P_hit", 0.0) or 0.0)
+        cep50 = float(data.get("cep50", 0.0) or 0.0)
+        decision = str(data.get("decision", "NO DROP"))
+        n_samples = int(data.get("n_samples", 300))
+        threshold = float(data.get("threshold_pct", 75.0))
+
+        snapshot = {
+            "snapshot_type": data.get("snapshot_type", "EVALUATION"),
+            "impact_points": impact_points,
+            "hits": data.get("hits"),
+            "P_hit": p_hit,
+            "cep50": cep50,
+            "target_position": data.get("target_position"),
+            "target_radius": data.get("target_radius"),
+            "confidence_index": data.get("confidence_index"),
+            "n_samples": n_samples,
+            "telemetry": data.get("telemetry_snapshot", {}),
+            "wind_vector": data.get("wind_vector"),
+            "random_seed": data.get("random_seed"),
+            "threshold_pct": threshold,
+            "ci_low": data.get("ci_low"),
+            "ci_high": data.get("ci_high"),
+            "p_hat": data.get("p_hat"),
+            "decision": data.get("decision"),
+            "mission_mode": data.get("mission_mode", "TACTICAL"),
+            "decision_reason": data.get("decision_reason"),
+            "doctrine_mode": data.get("doctrine_mode"),
+            "doctrine_description": data.get("doctrine_description"),
+        }
+        last_snapshot = self._latest_snapshot or {}
+        previous_decision = last_snapshot.get("decision") if last_snapshot.get("snapshot_type") == "EVALUATION" else None
+        enrich_evaluation_snapshot(snapshot, previous_decision)
+        t0 = time.perf_counter()
+        self._latest_snapshot = snapshot
+        self._log_state_transition("EVALUATION")
+        self.app_state = AppState.EVALUATED
+        self.snapshot_active = True
+        self._last_eval_time = data.get("timestamp")
+        # Timestamp from evaluation packet only—no drift from previous manual snapshot
+        ts = data.get("timestamp")
+        self._snapshot_created_at = datetime.fromtimestamp(ts) if ts is not None else None
+
+        paused_info = None
+        if self._glow_timer.isActive():
+            self._glow_timer.stop()
+        decision = str(snapshot.get("decision", "")).strip().upper()
+        robustness = snapshot.get("robustness_status") or ""
+        self._render_mission_tab_operator(
+            snapshot, decision, p_hit, cep50, threshold, None, impact_points, paused_info,
+            robustness_status=robustness,
+        )
+        snapshot["render_time_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
+        self._update_evaluate_button_text()
+
     @Slot(dict)
     def handle_telemetry(self, data: dict) -> None:
         self._last_telemetry = dict(data or {})
+        with self.telemetry_state.lock:
+            self.telemetry_state.data = dict(self._last_telemetry)
         if self.system_mode == "LIVE":
             self._apply_live_telemetry_to_panel()
+            self._push_config_to_worker()
         packet_rate = float(data.get("packet_rate_hz", 2.0))
         age_s = float(data.get("age_s", 0.5))
         status = str(data.get("status", "LIVE"))
         self.left_panel.set_telemetry_health(packet_rate, age_s, status)
         self._update_simulation_age()
-        if self.main_tabs.currentIndex() == 2:
+        if self.main_tabs.currentIndex() == self.main_tabs.indexOf(self.telemetry_tab):
             self._render_sensor_tab()
         self.status_strip.telemetry_label.setText("Telemetry: LIVE")
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        # READY block (card + label): click starts simulation. No hover/animation.
+        if obj in (self.decision_state_card, self.decision_label) and getattr(self, "_current_decision", "") == "READY":
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if not self.simulation_running and self.app_state == AppState.PAYLOAD_SELECTED:
+                    self._start_simulation(trigger="manual_lock")
+                return True
+            return False
+        # Paused message: READY -> click starts sim (no hover). PAUSED -> click navigates, hover zooms.
+        if obj is self.paused_message_label:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if getattr(self, "_current_decision", "") == "READY":
+                    if not self.simulation_running and self.app_state == AppState.PAYLOAD_SELECTED:
+                        self._start_simulation(trigger="manual_lock")
+                    return True
+                if self._paused_target_tab is not None:
+                    idx = self.main_tabs.indexOf(self._paused_target_tab)
+                    if idx >= 0:
+                        self.main_tabs.setCurrentIndex(idx)
+                    return True
+            if getattr(self, "_current_decision", "") == "PAUSED":
+                if event.type() == QEvent.Type.Enter:
+                    current = self.paused_message_label.font()
+                    current.setPointSizeF(current.pointSizeF() + 1)
+                    self.paused_message_label.setFont(current)
+                    self.paused_message_label.setStyleSheet("color: #f0f0f0; font-size: 12px; padding: 4px;")
+                    return False
+                if event.type() == QEvent.Type.Leave:
+                    current = self.paused_message_label.font()
+                    current.setPointSizeF(current.pointSizeF() - 1)
+                    self.paused_message_label.setFont(current)
+                    self.paused_message_label.setStyleSheet("color: #d4a017; font-size: 11px; padding: 4px;")
+                    return False
+            return False
+        # New Simulation card: click, hover glow + 1px zoom (card + children)
+        _new_sim_widgets = (
+            getattr(self, 'new_sim_card', None),
+            getattr(self, '_new_sim_icon', None),
+            getattr(self, '_new_sim_title', None),
+            getattr(self, '_new_sim_subtitle', None),
+        )
+        if obj in _new_sim_widgets and obj is not None:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._on_new_simulation_clicked()
+                return True
+            if event.type() == QEvent.Type.Enter:
+                self._apply_new_sim_card_style(hovered=True)
+                return False
+            if event.type() == QEvent.Type.Leave:
+                w = QApplication.widgetAt(QCursor.pos())
+                while w and w is not self.new_sim_card:
+                    w = w.parentWidget()
+                if w is not self.new_sim_card:
+                    self._apply_new_sim_card_style(hovered=False)
+                return False
+        # Canvas: forward wheel events to scroll area so page scrolls over the plot
+        if hasattr(self, 'mission_canvas_op') and obj is self.mission_canvas_op:
+            if event.type() == QEvent.Type.Wheel:
+                scroll_area = self.mission_tab_operator.findChild(QScrollArea)
+                if scroll_area is not None:
+                    from PySide6.QtCore import QCoreApplication
+                    QCoreApplication.sendEvent(scroll_area.viewport(), event)
+                    return True
+        return super().eventFilter(obj, event)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.auto_timer.stop()
         if self._simulation_worker is not None and self._simulation_worker.isRunning():
             self._simulation_worker.wait(3000)
+
+        if self.evaluation_worker is not None:
+            self.evaluation_worker.running = False
+            self.evaluation_worker.wait(2000)
 
         if self.telemetry_worker is not None:
             self.telemetry_worker.stop()

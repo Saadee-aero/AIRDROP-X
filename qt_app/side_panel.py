@@ -5,7 +5,6 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -13,10 +12,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
+
+from widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
 
 
 class MissionConfigPanel(QWidget):
@@ -37,7 +37,7 @@ class MissionConfigPanel(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setSpacing(14)
 
         # Group 0: SYSTEM MODE
         mode_group, mode_form = self._make_group("System mode")
@@ -118,10 +118,10 @@ class MissionConfigPanel(QWidget):
 
         # Group 5: SIMULATION
         sim_group, sim_form = self._make_group("SIMULATION")
-        self.num_samples = QSpinBox(self)
+        self.num_samples = NoWheelSpinBox(self)
         self.num_samples.setRange(50, 1000)
         self.num_samples.setSingleStep(50)
-        self.random_seed = QSpinBox(self)
+        self.random_seed = NoWheelSpinBox(self)
         self.random_seed.setRange(0, 2_147_483_647)
         self.random_seed.setSingleStep(1)
         self.simulation_widgets = [self.num_samples, self.random_seed]
@@ -185,19 +185,19 @@ class MissionConfigPanel(QWidget):
         container.setObjectName("configGroup")
         container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         vbox = QVBoxLayout(container)
-        vbox.setContentsMargins(8, 8, 8, 8)
-        vbox.setSpacing(6)
+        vbox.setContentsMargins(10, 10, 10, 10)
+        vbox.setSpacing(10)
         label = QLabel(title, container)
         label.setObjectName("groupTitle")
         vbox.addWidget(label)
         form = QFormLayout()
-        form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(5)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(8)
         vbox.addLayout(form)
         return container, form
 
-    def _double_spin(self, minimum: float, maximum: float, step: float, decimals: int) -> QDoubleSpinBox:
-        box = QDoubleSpinBox(self)
+    def _double_spin(self, minimum: float, maximum: float, step: float, decimals: int) -> NoWheelDoubleSpinBox:
+        box = NoWheelDoubleSpinBox(self)
         box.setRange(minimum, maximum)
         box.setSingleStep(step)
         box.setDecimals(decimals)

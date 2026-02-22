@@ -387,6 +387,8 @@ def render(
         and target_position is not None
         and np.size(impact_points) >= 2
     ):
+        print("ANALYTICAL MODE:", dispersion_mode)
+        print("IMPACT COUNT:", np.size(impact_points) // 2 if impact_points is not None else 0)
         impact_points = np.asarray(impact_points, dtype=float)
         if impact_points.ndim == 1:
             impact_points = impact_points.reshape(-1, 2)

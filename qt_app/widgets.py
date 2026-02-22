@@ -3,7 +3,29 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QDoubleSpinBox, QFrame, QLabel, QSlider, QSpinBox, QVBoxLayout, QWidget
+
+
+class NoWheelSpinBox(QSpinBox):
+    """QSpinBox that ignores wheel events so scrolling scrolls the window instead of changing value."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores wheel events so scrolling scrolls the window instead of changing value."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
+
+
+class NoWheelSlider(QSlider):
+    """QSlider that ignores wheel events so scrolling scrolls the window instead of changing value."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
 
 
 class LeftPanelPlaceholder(QFrame):

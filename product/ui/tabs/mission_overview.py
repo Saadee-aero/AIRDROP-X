@@ -33,31 +33,11 @@ def render(
     advisory_result=None,
     **kwargs
 ):
-    ax.set_axis_off()
     ax.set_facecolor(BG_MAIN)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
 
-    # Left: decision banner + metrics + advisory (aligned spacing)
-    left_ax = ax.inset_axes([0.02, 0.04, 0.34, 0.92])
-    _draw_banner_metrics_advisory(
-        left_ax,
-        decision,
-        target_hit_percentage,
-        cep50,
-        threshold,
-        mode,
-        advisory_result,
-        len(impact_points) if impact_points is not None else 0,
-        kwargs.get("confidence_index"),
-        kwargs.get("random_seed"),
-        target_radius,
-    )
-
-    # Right: target / crosshair view (aligned spacing)
-    right_ax = ax.inset_axes([0.38, 0.04, 0.60, 0.92])
+    # Render directly into the provided axes — no inset, no wasted space
     _draw_target_view(
-        right_ax,
+        ax,
         impact_points,
         target_position,
         target_radius,
@@ -69,21 +49,6 @@ def render(
         kwargs.get("view_zoom", 1.0),
     )
 
-    snapshot_timestamp = kwargs.get("snapshot_timestamp")
-    random_seed = kwargs.get("random_seed")
-    n_samples = kwargs.get("n_samples")
-    if snapshot_timestamp is not None:
-        ax.text(
-            0.5,
-            0.01,
-            f"Snapshot: {snapshot_timestamp or '---'} | Seed: {random_seed if random_seed is not None else '---'} | Samples: {n_samples if n_samples is not None else '---'}",
-            transform=ax.transAxes,
-            ha="center",
-            va="bottom",
-            color=TEXT_LABEL,
-            fontsize=7,
-            family="monospace",
-        )
 
 
 def _draw_banner_metrics_advisory(

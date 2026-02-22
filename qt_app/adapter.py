@@ -101,8 +101,47 @@ def run_simulation_snapshot(
         telemetry_freshness=None,
     )
 
+    # True integer hit count (same logic as metrics.compute_hit_probability)
+    import numpy as np
+    impact_arr = np.asarray(impact_points, dtype=float)
+    if impact_arr.size > 0 and impact_arr.ndim == 2 and impact_arr.shape[1] >= 2:
+        target_2d = np.asarray(mission_state.target.position, dtype=float).reshape(2)
+        radial_distances = np.linalg.norm(impact_arr[:, :2] - target_2d, axis=1)
+        hits = int(np.sum(radial_distances <= mission_state.target.radius))
+        n_actual = int(impact_arr.shape[0])
+        P_hit = float(hits) / float(n_actual) if n_actual > 0 else 0.0
+    else:
+        hits = 0
+        n_actual = n_samples
+        P_hit = 0.0
+
+    # Telemetry-like dict for unified Control Center rendering (SNAPSHOT path)
+    telemetry = {
+        "x": uav_pos[0],
+        "y": uav_pos[1],
+        "z": uav_pos[2],
+        "vx": uav_vel[0],
+        "vy": uav_vel[1],
+        "wind_x": wind_mean[0],
+        "wind_y": wind_mean[1] if len(wind_mean) > 1 else 0.0,
+        "wind_std": wind_std,
+    }
+    # Wilson CI and doctrine for SNAPSHOT path (uses true integer hits)
+    from src.statistics import compute_wilson_ci
+    from src.decision_doctrine import evaluate_doctrine, DOCTRINE_DESCRIPTIONS
+    ci_low, ci_high = compute_wilson_ci(hits, n_actual)
+    doctrine = str(overrides.get("doctrine_mode", "BALANCED")).strip().upper()
+    doctrine_result = evaluate_doctrine(
+        p_hat=P_hit,
+        ci_low=ci_low,
+        ci_high=ci_high,
+        threshold=threshold_pct / 100.0,
+        doctrine=doctrine,
+        n_samples=n_actual,
+    )
     return {
         "impact_points": impact_points,
+        "hits": hits,
         "P_hit": P_hit,
         "cep50": cep50,
         "target_position": mission_state.target.position,
@@ -112,4 +151,15 @@ def run_simulation_snapshot(
         "impact_velocity_stats": impact_velocity_stats,
         "snapshot_id": datetime.now().strftime("AX-%Y%m%d-%H%M%S"),
         "confidence_index": confidence_index,
+        "telemetry": telemetry,
+        "n_samples": n_actual,
+        "random_seed": random_seed,
+        "threshold_pct": threshold_pct,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "p_hat": P_hit,
+        "decision": doctrine_result["decision"],
+        "decision_reason": doctrine_result["reason"],
+        "doctrine_mode": doctrine,
+        "doctrine_description": doctrine_result.get("doctrine_description") or DOCTRINE_DESCRIPTIONS.get(doctrine, doctrine),
     }
