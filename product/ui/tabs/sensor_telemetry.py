@@ -133,11 +133,11 @@ def _draw_panel_frame(ax, title, subtitle=None):
         spine.set_color(_BORDER)
     ax.add_patch(mpatches.Rectangle((0.02, 0.02), 0.96, 0.96, linewidth=1,
                  edgecolor=_BORDER, facecolor="none", transform=ax.transAxes))
-    ax.text(0.5, 0.96, title, transform=ax.transAxes, fontsize=10,
+    ax.text(0.5, 0.96, title, transform=ax.transAxes, fontsize=12,
             color=_ACCENT, ha="center", va="top", family="monospace")
     if subtitle:
-        ax.text(0.5, 0.90, subtitle, transform=ax.transAxes, fontsize=7,
-                color=_LABEL, ha="center", va="top", family="monospace")
+        ax.text(0.5, 0.90, subtitle, transform=ax.transAxes, fontsize=9,
+                color=_ACCENT, ha="center", va="top", family="monospace")
 
 
 def _draw_navigation_panel(ax, d):
@@ -151,8 +151,8 @@ def _draw_navigation_panel(ax, d):
             y,
             lbl,
             transform=ax.transAxes,
-            fontsize=8,
-            color=_LABEL,
+            fontsize=10,
+            color=_ACCENT,
             va="center",
             ha="left",
             family="monospace",
@@ -162,8 +162,8 @@ def _draw_navigation_panel(ax, d):
             y,
             val,
             transform=ax.transAxes,
-            fontsize=8,
-            color=color or _TEXT,
+            fontsize=10,
+            color=_ACCENT,
             ha="right",
             va="center",
             family="monospace",
@@ -190,7 +190,7 @@ def _draw_navigation_panel(ax, d):
     row("Altitude", _fmt(d["gnss_altitude_m"], "{:.0f}", " m"))
     y -= dy
     fix = d.get("gnss_fix") or "--"
-    row("Fix", fix, _status_color(fix))
+    row("Fix", fix)
     y -= dy
     fresh = d.get("gnss_freshness_s")
     freshness = _fmt(fresh, "{:.2f}", " s ago") if fresh is not None else "--"
@@ -208,8 +208,8 @@ def _draw_attitude_panel(ax, d):
             y,
             lbl,
             transform=ax.transAxes,
-            fontsize=8,
-            color=_LABEL,
+            fontsize=10,
+            color=_ACCENT,
             va="center",
             ha="left",
             family="monospace",
@@ -219,8 +219,8 @@ def _draw_attitude_panel(ax, d):
             y,
             val,
             transform=ax.transAxes,
-            fontsize=8,
-            color=color or _TEXT,
+            fontsize=10,
+            color=_ACCENT,
             ha="right",
             va="center",
             family="monospace",
@@ -235,7 +235,7 @@ def _draw_attitude_panel(ax, d):
     row("|a|", _fmt(d["accel_mag_ms2"], "{:.2f}", " m/s^2"))
     y -= dy
     imu = d.get("imu_health") or "--"
-    row("IMU", imu, _status_color(imu))
+    row("IMU", imu)
 
 
 def _draw_environment_panel(ax, d):
@@ -249,8 +249,8 @@ def _draw_environment_panel(ax, d):
             y,
             lbl,
             transform=ax.transAxes,
-            fontsize=8,
-            color=_LABEL,
+            fontsize=10,
+            color=_ACCENT,
             va="center",
             ha="left",
             family="monospace",
@@ -260,8 +260,8 @@ def _draw_environment_panel(ax, d):
             y,
             val,
             transform=ax.transAxes,
-            fontsize=8,
-            color=color or _ESTIMATED,
+            fontsize=10,
+            color=_ACCENT,
             ha="right",
             va="center",
             family="monospace",
