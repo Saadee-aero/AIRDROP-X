@@ -278,7 +278,7 @@ def _draw_environment_panel(ax, d):
     u = d.get("wind_uncertainty")
     row("Uncertainty", _fmt(u, "{:.2f}", "") if u is not None else "--")
     y -= dy
-    row("Source", (d.get("wind_source") or "--")[:14])
+    row("Source", (d.get("wind_source") or "--")[:20])
     y -= dy
     row("Confidence", (d.get("wind_confidence") or "--")[:12])
     y -= dy
