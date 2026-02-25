@@ -40,21 +40,21 @@ def plot_impact_dispersion(
     cep50=None,
     release_point=None,
     wind_vector=None,
-    mode="operator",
+    mode="standard",
     P_hit=None,
     wind_speed=None,
     show_density=False,
     view_zoom=1.0,
 ):
     """
-    Render impact dispersion. mode='operator' (minimal) or 'engineering' (full diagnostics).
+    Render impact dispersion. mode='standard' (minimal) or 'advanced' (full diagnostics).
     No simulation change; rendering only.
     """
     impact_points = np.asarray(impact_points, dtype=float)
     target_position = np.asarray(target_position, dtype=float).reshape(2)
     r_target = float(target_radius) if target_radius is not None else 0.0
     r_cep = float(cep50) if (cep50 is not None and cep50 > 0) else 0.0
-    is_operator = (mode == "operator")
+    is_standard = (mode == "standard")
     try:
         zoom = float(view_zoom)
     except Exception:
@@ -112,8 +112,8 @@ def plot_impact_dispersion(
     for spine in ax.spines.values():
         spine.set_color(_BORDER)
 
-    # ----- Operator mode: minimal layers only -----
-    if is_operator:
+    # ----- Standard mode: minimal layers only -----
+    if is_standard:
         view_radius = max(3.0 * ellipse_width, 2.0 * r_target)
         view_radius = max(view_radius, 10.0)
         xmin, xmax = target_position[0] - view_radius, target_position[0] + view_radius
@@ -223,7 +223,7 @@ def plot_impact_dispersion(
         ax.set_ylabel("Y (m)", labelpad=0)
         ax.tick_params(axis="both", pad=2)
         ax.set_axisbelow(True)
-        # Dark, visible, low-distraction grid for operator mode.
+        # Dark, visible, low-distraction grid for standard mode.
         ax.grid(
             True,
             color=_GRID,
@@ -266,7 +266,7 @@ def plot_impact_dispersion(
         )
         return
 
-    # ----- Engineering mode: full layers (only when simulation has run) -----
+    # ----- Advanced mode: full layers (only when simulation has run) -----
     if impact_points.shape[0] == 0:
         # No simulation: axes + grid only
         view_radius = max(2.0 * r_target, 10.0)
@@ -295,7 +295,7 @@ def plot_impact_dispersion(
     xmin, xmax = mean_x - plot_radius, mean_x + plot_radius
     ymin, ymax = mean_y - plot_radius, mean_y + plot_radius
 
-    # Engineering layering policy (background -> foreground):
+    # Advanced layering policy (background -> foreground):
     # density(1/2), impacts(3), target+cep(6), ellipse/axes(7), wind/release(8), mean(9), legend/text(10+).
     ax.scatter(
         impact_points[:, 0],

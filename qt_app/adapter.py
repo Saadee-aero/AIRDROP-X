@@ -16,8 +16,13 @@ if str(_ROOT) not in sys.path:
 def run_simulation_snapshot(
     config_override: Dict[str, Any] | None = None,
     include_advisory: bool = False,
+    previous_wind_gradient: float | None = None,
+    *,
+    caller: str = "BASE",
+    trace_mode: str | None = None,
+    mc_call_counter: list | None = None,
 ) -> Dict[str, Any]:
-    """Run one simulation snapshot using existing engine pipeline."""
+    """Run one simulation snapshot using existing engine pipeline. AX-MC-CALL-TRACE-25."""
     from configs import mission_configs as cfg
     from product.payloads.payload_base import Payload
     from product.missions.target_manager import Target
@@ -29,6 +34,15 @@ def run_simulation_snapshot(
     )
 
     overrides = dict(config_override or {})
+    is_outer = mc_call_counter is None
+    if mc_call_counter is None:
+        mc_call_counter = [0]
+    # Engine entry observability
+    print("DISPLAY =", overrides.get("display_mode"))
+    print("FIDELITY =", overrides.get("simulation_fidelity"))
+    print("EXECUTION =", overrides.get("execution_mode"))
+    mode = trace_mode if trace_mode is not None else str(overrides.get("simulation_fidelity", "advanced")).strip().lower() or "advanced"
+    print(f"[ENGINE TRACE] mode={mode}")
 
     mass = float(overrides.get("mass", cfg.mass))
     cd = float(overrides.get("cd", cfg.Cd))
@@ -76,19 +90,22 @@ def run_simulation_snapshot(
 
     saved_n_samples = cfg.n_samples
     cfg.n_samples = n_samples
+    mc_call_counter[0] += 1
     try:
         impact_points, P_hit, cep50, impact_velocity_stats = get_impact_points_and_metrics(
-            mission_state, random_seed
+            mission_state, random_seed, caller=caller, mode=mode
         )
     finally:
         cfg.n_samples = saved_n_samples
 
     advisory_result = None
     if include_advisory:
+        print(f"[ADVISORY TRACE] EXECUTING SWEEP in mode={mode}")
         advisory_result = evaluate_advisory(
             mission_state,
             threshold_pct / 100.0,
             random_seed=random_seed,
+            trace_mode=mode,
         )
 
     # Confidence index for Mission Overview banner
@@ -139,7 +156,7 @@ def run_simulation_snapshot(
         doctrine=doctrine,
         n_samples=n_actual,
     )
-    return {
+    result = {
         "impact_points": impact_points,
         "hits": hits,
         "P_hit": P_hit,
@@ -163,3 +180,60 @@ def run_simulation_snapshot(
         "doctrine_mode": doctrine,
         "doctrine_description": doctrine_result.get("doctrine_description") or DOCTRINE_DESCRIPTIONS.get(doctrine, doctrine),
     }
+
+    # AX-SENSITIVITY-HYBRID-09: optional sensitivity computation
+    simulation_fidelity = str(overrides.get("simulation_fidelity", "")).strip().lower()
+    if simulation_fidelity in ("standard", "advanced"):
+        try:
+            from src.sensitivity import compute_sensitivity
+
+            updated_gradient = compute_sensitivity(
+                result, overrides, simulation_fidelity,
+                previous_wind_gradient=previous_wind_gradient,
+                mc_call_counter=mc_call_counter,
+            )
+            if updated_gradient is not None:
+                result["updated_wind_gradient"] = updated_gradient
+        except Exception:
+            pass  # Non-fatal; snapshot remains valid
+
+    # AX-MISS-TOPOLOGY-HYBRID-12: topology layer (after sensitivity, before emission)
+    if simulation_fidelity in ("standard", "advanced"):
+        try:
+            from src.topology import compute_topology
+
+            compute_topology(result, simulation_fidelity)
+        except Exception:
+            pass  # Non-fatal; snapshot remains valid
+
+    # AX-RELEASE-CORRIDOR-19: release corridor (after topology)
+    if simulation_fidelity in ("standard", "advanced"):
+        try:
+            from src.release_corridor import compute_release_corridor
+
+            compute_release_corridor(result, overrides, simulation_fidelity, mc_call_counter=mc_call_counter)
+        except Exception:
+            pass  # Non-fatal; snapshot remains valid
+
+    # AX-FRAGILITY-SURFACE-20: fragility state (uses sensitivity when advanced fidelity)
+    if simulation_fidelity in ("standard", "advanced"):
+        try:
+            from src.fragility import compute_fragility
+
+            compute_fragility(result, overrides, simulation_fidelity, mc_call_counter=mc_call_counter)
+        except Exception:
+            pass  # Non-fatal; snapshot remains valid
+
+    # AX-UNCERTAINTY-DECOMPOSITION-21: contribution weights (requires sensitivity_matrix)
+    if simulation_fidelity == "advanced":
+        try:
+            from src.uncertainty_decomposition import compute_uncertainty_contribution
+
+            compute_uncertainty_contribution(result)
+        except Exception:
+            pass  # Non-fatal; snapshot remains valid
+
+    if is_outer:
+        print(f"[MC SUMMARY] total_calls_this_cycle={mc_call_counter[0]}")
+
+    return result

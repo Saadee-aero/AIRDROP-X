@@ -45,7 +45,7 @@ def render(
         target_hit_percentage,
         kwargs.get("release_point"),
         kwargs.get("wind_vector"),
-        kwargs.get("dispersion_mode", "operator"),
+        kwargs.get("dispersion_mode", "standard"),
         kwargs.get("view_zoom", 1.0),
     )
 
@@ -327,7 +327,7 @@ def _draw_target_view(
     target_hit_percentage=None,
     release_point=None,
     wind_vector=None,
-    dispersion_mode="operator",
+    dispersion_mode="standard",
     view_zoom=1.0,
 ):
     target_position = np.asarray(target_position, dtype=float).reshape(2)
@@ -341,8 +341,8 @@ def _draw_target_view(
             impact_points = np.empty((0, 2), dtype=float)
 
     mode_val = str(dispersion_mode).strip().lower()
-    if mode_val not in ("operator", "engineering"):
-        mode_val = "operator"
+    if mode_val not in ("standard", "advanced"):
+        mode_val = "standard"
 
     wind_speed = 0.0
     if wind_vector is not None:
@@ -370,13 +370,13 @@ def _draw_target_view(
         mode=mode_val,
         P_hit=p_hit_for_color,
         wind_speed=wind_speed,
-        show_density=(mode_val == "engineering"),
+        show_density=(mode_val == "advanced"),
         view_zoom=view_zoom,
     )
 
     # Match Streamlit tab badge in top-left corner (aligned).
-    mode_badge = "OPERATOR MODE" if mode_val == "operator" else "ENGINEERING MODE"
-    dot_color = "#00FF66" if mode_val == "operator" else "#ffaa00"
+    mode_badge = "STANDARD DISPLAY" if mode_val == "standard" else "ADVANCED DISPLAY"
+    dot_color = "#00FF66" if mode_val == "standard" else "#ffaa00"
     ax.add_patch(
         plt.Circle(
             (0.02, 0.98),

@@ -14,7 +14,6 @@ from product.ui.ui_theme import (
     ACCENT_WARN,
     BORDER_SUBTLE,
 )
-from product.guidance.numerical_diagnostics import quick_stability_check
 from typing import Any, Dict, List
 
 
@@ -158,30 +157,10 @@ def render(ax, **kwargs):
     ]
     y = section("REPRODUCIBILITY", y, repro_lines, line_height=0.14)
 
-    # 3. Numerical Stability (Streamlit order: before Limitations)
-    dt = d.get("dt")
-    seed = d.get("random_seed")
+    # 3. Numerical Stability (display only; no engine/Monte Carlo in render path)
     stability_lines: List[str] = [
-        "Integration method: Explicit Euler",
-        f"Time step dt: {_fmt(dt)} s",
-        "Samples: 5",
-        "Stability status: --",
+        "Stability diagnostics available after simulation run.",
     ]
-    try:
-        if dt is not None and seed is not None:
-            stab = quick_stability_check(
-                random_seed=int(seed), dt=float(dt), samples=5
-            )
-            status = stab["status"]
-            rel = stab["relative_error"] * 100.0
-            stability_lines = [
-                f"Integration method: {stab['integration_method']}",
-                f"Time step dt: {stab['dt']} s",
-                f"Samples: {stab['samples']}",
-                f"Stability status: {status} (relative error {rel:.2f}%)",
-            ]
-    except Exception:
-        pass
     y = section("NUMERICAL STABILITY", y, stability_lines, line_height=0.12)
 
     # 4. Limitations & Assumptions

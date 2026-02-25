@@ -24,7 +24,7 @@ class ImpactDispersionCanvas(FigureCanvasQTAgg):
     def __init__(self, parent=None) -> None:
         self.figure = Figure(figsize=(6.0, 5.0), facecolor="#0B0F0B")
         self.ax = self.figure.add_subplot(111)
-        self.current_mode = "operator"
+        self.current_mode = "standard"
         self._last_snapshot = None
         super().__init__(self.figure)
         if parent is not None:
@@ -62,7 +62,7 @@ class ImpactDispersionCanvas(FigureCanvasQTAgg):
 
     def set_mode(self, mode: str) -> None:
         mode_norm = str(mode).strip().lower()
-        if mode_norm not in ("operator", "engineering"):
+        if mode_norm not in ("standard", "advanced"):
             return
         self.current_mode = mode_norm
         self.redraw_last_snapshot()
@@ -184,8 +184,8 @@ class ImpactDispersionCanvas(FigureCanvasQTAgg):
                     zorder=4,
                 )
 
-        # Operator mode: minimal overlays only.
-        if self.current_mode == "operator":
+        # Standard mode: minimal overlays only.
+        if self.current_mode == "standard":
             dx = float(mean[0] - target_center[0])
             dy = float(mean[1] - target_center[1])
             offset = float(np.hypot(dx, dy))
@@ -217,7 +217,7 @@ class ImpactDispersionCanvas(FigureCanvasQTAgg):
                 zorder=10,
             )
         else:
-            # Engineering mode: full layers + legend.
+            # Advanced mode: full layers + legend.
             if impact_points.shape[0] > 0:
                 self.ax.scatter(
                     impact_points[:, 0],

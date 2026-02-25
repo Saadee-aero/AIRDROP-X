@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 
-from PySide6.QtCore import QEvent, QObject, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal, Slot, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from widgets import NoWheelDoubleSpinBox, NoWheelSpinBox
+from widgets import NoWheelDoubleSpinBox, NoWheelSlider, NoWheelSpinBox
 
 from product.ui.tabs.payload_library import PAYLOAD_LIBRARY, CATEGORIES, get_default_physics_for_payload
 from src.decision_doctrine import DOCTRINE_DESCRIPTIONS
@@ -45,6 +45,7 @@ DOCTRINE_DISPLAY_LABELS_HUMANITARIAN = {
 }
 
 MISSION_MODES = ("TACTICAL", "HUMANITARIAN")
+FIDELITY_VALUES = ("standard", "advanced")
 DOCTRINE_VALUES = ("STRICT", "BALANCED", "AGGRESSIVE")
 N_SAMPLES_PRESETS = (300, 500, 1000, 1500)
 
@@ -61,14 +62,6 @@ def _payload_library_normalized() -> dict:
             result[cat][sub] = []
         result[cat][sub].append(p)
     return result
-
-
-def _divider() -> QFrame:
-    """Horizontal divider line."""
-    d = QFrame()
-    d.setFrameShape(QFrame.Shape.HLine)
-    d.setStyleSheet("background-color: #1a2a1a; max-height: 1px;")
-    return d
 
 
 class _FrameClickForwarder(QObject):
@@ -98,22 +91,20 @@ class ConfigPanel(QFrame):
         self.setMinimumWidth(180)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(9, 7, 9, 7)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 6, 8, 6)
+        root.setSpacing(6)
 
         title_lbl = QLabel(title)
         title_lbl.setObjectName("panelTitle")
         title_lbl.setStyleSheet(f"color: {PRIMARY_COLOR}; font-weight: bold; font-size: 13px;")
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         root.addWidget(title_lbl)
-        root.addWidget(_divider())
 
         self.content_layout = QVBoxLayout()
         self.content_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout.setSpacing(8)
+        self.content_layout.setSpacing(6)
         root.addLayout(self.content_layout)
         root.addStretch(1)
-        root.addWidget(_divider())
 
         self.summary_label = QLabel("—")
         self.summary_label.setStyleSheet(f"color: {SECONDARY_COLOR}; font-size: 13px;")
@@ -129,6 +120,7 @@ class MissionConfigTab(QWidget):
 
     config_committed = Signal(dict)
     dirty_changed = Signal(bool)
+    threshold_changed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -137,7 +129,9 @@ class MissionConfigTab(QWidget):
         self._dirty = False
         self._config_committed = False
         self._mission_mode = "TACTICAL"
+        self._simulation_fidelity = "advanced"
         self._doctrine = "BALANCED"
+        self._threshold_pct = 75.0
         self._n_samples = 1000
         self._reproducible = False
         self._random_seed = 42
@@ -149,24 +143,33 @@ class MissionConfigTab(QWidget):
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(13, 13, 13, 13)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(8)
 
-        # ---- MissionModeStrip ----
+        # ---- Mission Mode + Simulation Fidelity strip (horizontal: two equal blocks) ----
         self._mode_strip = QFrame(self)
         self._mode_strip.setObjectName("missionModeStrip")
         self._mode_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self._mode_strip.setStyleSheet(
             "QFrame#missionModeStrip { border: 1px solid #1a2a1a; border-radius: 4px; background-color: #0a110a; }"
         )
-        mode_layout = QVBoxLayout(self._mode_strip)
-        mode_layout.setContentsMargins(9, 7, 9, 7)
-        mode_layout.setSpacing(8)
+        strip_layout = QHBoxLayout(self._mode_strip)
+        strip_layout.setContentsMargins(8, 5, 8, 5)
+        strip_layout.setSpacing(12)
+
+        # Left block: Mission Mode
+        left_block = QWidget(self._mode_strip)
+        left_block.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        mode_layout = QVBoxLayout(left_block)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(6)
+        mode_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         mode_title = QLabel("Mission Mode")
+        mode_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mode_title.setStyleSheet(f"color: {PRIMARY_COLOR}; font-weight: bold; font-size: 13px;")
         mode_layout.addWidget(mode_title)
         mode_row = QHBoxLayout()
-        self._tactical_frame = QFrame(self._mode_strip)
+        self._tactical_frame = QFrame(left_block)
         self._tactical_frame.setObjectName("modeOptionFrame")
         self._tactical_frame.setStyleSheet(
             "QFrame#modeOptionFrame { border: 1px solid #2cff05; border-radius: 3px; padding: 3px; background-color: transparent; }"
@@ -184,7 +187,7 @@ class MissionConfigTab(QWidget):
         tactical_inner.addWidget(self._tactical_radio)
         self._tactical_frame.installEventFilter(_FrameClickForwarder(self._tactical_radio))
 
-        self._humanitarian_frame = QFrame(self._mode_strip)
+        self._humanitarian_frame = QFrame(left_block)
         self._humanitarian_frame.setObjectName("modeOptionFrame")
         self._humanitarian_frame.setStyleSheet(
             "QFrame#modeOptionFrame { border: 1px solid transparent; border-radius: 3px; padding: 3px; background-color: transparent; }"
@@ -207,6 +210,7 @@ class MissionConfigTab(QWidget):
 
         self._tactical_radio.toggled.connect(self._on_mission_mode_changed)
         self._humanitarian_radio.toggled.connect(self._on_mission_mode_changed)
+        mode_row.addStretch(1)
         mode_row.addWidget(self._tactical_frame)
         mode_row.addWidget(self._humanitarian_frame)
         mode_row.addStretch(1)
@@ -214,14 +218,117 @@ class MissionConfigTab(QWidget):
         mode_caption = QLabel(
             "Adjusts presentation style and recommended defaults. Does not modify physics or statistical logic."
         )
-        mode_caption.setWordWrap(False)
+        mode_caption.setWordWrap(True)
         mode_caption.setStyleSheet(f"color: {SECONDARY_COLOR}; font-size: 11px;")
-        mode_caption.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        mode_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mode_caption.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         mode_layout.addWidget(mode_caption)
+        strip_layout.addWidget(left_block, 1)
+
+        # Right block: Simulation Fidelity
+        right_block = QWidget(self._mode_strip)
+        right_block.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        fidelity_layout = QVBoxLayout(right_block)
+        fidelity_layout.setContentsMargins(0, 0, 0, 0)
+        fidelity_layout.setSpacing(6)
+        fidelity_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        fidelity_title = QLabel("Simulation Fidelity")
+        fidelity_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fidelity_title.setStyleSheet(f"color: {PRIMARY_COLOR}; font-weight: bold; font-size: 13px;")
+        fidelity_layout.addWidget(fidelity_title)
+        fidelity_row = QHBoxLayout()
+        self._standard_frame = QFrame(right_block)
+        self._standard_frame.setObjectName("modeOptionFrame")
+        self._standard_frame.setStyleSheet(
+            "QFrame#modeOptionFrame { border: 1px solid transparent; border-radius: 3px; padding: 3px; background-color: transparent; }"
+        )
+        self._standard_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        standard_inner = QVBoxLayout(self._standard_frame)
+        standard_inner.setContentsMargins(2, 1, 2, 1)
+        self._standard_radio = QRadioButton("Standard", self._standard_frame)
+        self._standard_radio.setStyleSheet(
+            "QRadioButton { color: #e8e8e8; border: none; padding-left: 0; min-height: 24px; }"
+            "QRadioButton::indicator { width: 0; height: 0; border: none; }"
+        )
+        self._standard_radio.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        standard_inner.addWidget(self._standard_radio)
+        self._standard_frame.installEventFilter(_FrameClickForwarder(self._standard_radio))
+
+        self._advanced_frame = QFrame(right_block)
+        self._advanced_frame.setObjectName("modeOptionFrame")
+        self._advanced_frame.setStyleSheet(
+            "QFrame#modeOptionFrame { border: 1px solid #2cff05; border-radius: 3px; padding: 3px; background-color: transparent; }"
+        )
+        self._advanced_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        advanced_inner = QVBoxLayout(self._advanced_frame)
+        advanced_inner.setContentsMargins(2, 1, 2, 1)
+        self._advanced_radio = QRadioButton("Advanced", self._advanced_frame)
+        self._advanced_radio.setChecked(True)
+        self._advanced_radio.setStyleSheet(
+            "QRadioButton { color: #e8e8e8; border: none; padding-left: 0; min-height: 24px; }"
+            "QRadioButton::indicator { width: 0; height: 0; border: none; }"
+        )
+        self._advanced_radio.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        advanced_inner.addWidget(self._advanced_radio)
+        self._advanced_frame.installEventFilter(_FrameClickForwarder(self._advanced_radio))
+
+        self._fidelity_button_group = QButtonGroup(self)
+        self._fidelity_button_group.addButton(self._standard_radio)
+        self._fidelity_button_group.addButton(self._advanced_radio)
+
+        self._standard_radio.toggled.connect(self._on_fidelity_changed)
+        self._advanced_radio.toggled.connect(self._on_fidelity_changed)
+        fidelity_row.addStretch(1)
+        fidelity_row.addWidget(self._standard_frame)
+        fidelity_row.addWidget(self._advanced_frame)
+        fidelity_row.addStretch(1)
+        fidelity_layout.addLayout(fidelity_row)
+        fidelity_caption = QLabel(
+            "Standard: lighter compute. Advanced: full sensitivity and analytical layers."
+        )
+        fidelity_caption.setWordWrap(True)
+        fidelity_caption.setStyleSheet(f"color: {SECONDARY_COLOR}; font-size: 11px;")
+        fidelity_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fidelity_caption.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        fidelity_layout.addWidget(fidelity_caption)
+        strip_layout.addWidget(right_block, 1)
+
         main_layout.addWidget(self._mode_strip)
 
-        main_layout.addWidget(_divider())
+        # ---- Threshold strip ----
+        self._threshold_strip = QFrame(self)
+        self._threshold_strip.setObjectName("thresholdStrip")
+        self._threshold_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._threshold_strip.setStyleSheet(
+            "QFrame#thresholdStrip { border: 1px solid #1a2a1a; border-radius: 4px; background-color: #0a110a; }"
+        )
+        th_layout = QHBoxLayout(self._threshold_strip)
+        th_layout.setContentsMargins(10, 6, 10, 6)
+        th_layout.setSpacing(8)
+        th_label = QLabel("Threshold %", self._threshold_strip)
+        th_label.setStyleSheet(f"color: {PRIMARY_COLOR}; font-weight: bold; font-size: 13px; min-width: 90px;")
+        self._threshold_slider = NoWheelSlider(Qt.Orientation.Horizontal, self._threshold_strip)
+        self._threshold_slider.setRange(0, 100)
+        self._threshold_slider.setValue(50)  # maps to 75.0
+        self._threshold_slider.setStyleSheet(
+            "QSlider { border: none; background: transparent; }"
+            "QSlider::groove:horizontal { height: 6px; background: #1a2a1a; border-radius: 3px; }"
+            "QSlider::sub-page:horizontal { background: #2cff05; border-radius: 3px; }"
+            "QSlider::handle:horizontal { width: 12px; margin: -3px 0; background: #2cff05; border-radius: 6px; }"
+        )
+        self._threshold_spinbox = NoWheelDoubleSpinBox(self._threshold_strip)
+        self._threshold_spinbox.setRange(50.0, 100.0)
+        self._threshold_spinbox.setSingleStep(0.5)
+        self._threshold_spinbox.setDecimals(1)
+        self._threshold_spinbox.setValue(75.0)
+        self._threshold_spinbox.setFixedWidth(80)
+        self._threshold_spinbox.setStyleSheet(INPUT_STYLE)
+        th_layout.addWidget(th_label)
+        th_layout.addWidget(self._threshold_slider, 1)
+        th_layout.addWidget(self._threshold_spinbox)
+        self._threshold_slider.valueChanged.connect(self._on_threshold_slider_changed)
+        self._threshold_spinbox.valueChanged.connect(self._on_threshold_spinbox_changed)
+        main_layout.addWidget(self._threshold_strip)
 
         # ---- Panels (horizontal) ----
         scroll = QScrollArea(self)
@@ -234,7 +341,7 @@ class MissionConfigTab(QWidget):
         panels_widget = QWidget()
         panels_layout = QHBoxLayout(panels_widget)
         panels_layout.setContentsMargins(0, 0, 0, 0)
-        panels_layout.setSpacing(12)
+        panels_layout.setSpacing(10)
 
         payload_panel = self._build_payload_panel()
         eval_panel = self._build_eval_panel()
@@ -261,9 +368,7 @@ class MissionConfigTab(QWidget):
         scroll.setWidget(panels_widget)
         main_layout.addWidget(scroll, 1)
 
-        main_layout.addWidget(_divider())
-
-        main_layout.addSpacing(24)
+        main_layout.addSpacing(12)
 
         # ---- CommitSection ----
         commit_frame = QFrame(self)
@@ -272,10 +377,10 @@ class MissionConfigTab(QWidget):
             "QFrame#commitFrame { border: 1px solid #1f3a1f; border-radius: 4px; background-color: #0a110a; }"
         )
         commit_frame_layout = QVBoxLayout(commit_frame)
-        commit_frame_layout.setContentsMargins(9, 9, 9, 9)
-        commit_frame_layout.setSpacing(8)
+        commit_frame_layout.setContentsMargins(8, 6, 8, 6)
+        commit_frame_layout.setSpacing(4)
         self._commit_btn = QPushButton("Commit Configuration", self)
-        self._commit_btn.setMinimumHeight(36)
+        self._commit_btn.setMinimumHeight(32)
         self._commit_btn.setStyleSheet(
             f"QPushButton {{ background-color: #1a2a1a; color: {PRIMARY_COLOR}; border: 1px solid #2a3a2a; border-radius: 4px; font-size: 15px; }}"
             "QPushButton:hover { background-color: #2a3a2a; }"
@@ -287,6 +392,7 @@ class MissionConfigTab(QWidget):
 
         self._update_panel_summaries()
         self._update_mode_strip_border()
+        self._update_fidelity_strip_border()
 
     def _build_payload_panel(self) -> ConfigPanel:
         panel = ConfigPanel("Payload & Release Profile", self)
@@ -294,7 +400,7 @@ class MissionConfigTab(QWidget):
         form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setContentsMargins(0, 0, 0, 0)
-        form.setSpacing(8)
+        form.setSpacing(6)
 
         self._category_combo = QComboBox(panel)
         self._category_combo.addItem("— Select category —", "")
@@ -357,7 +463,7 @@ class MissionConfigTab(QWidget):
         form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setContentsMargins(0, 0, 0, 0)
-        form.setSpacing(8)
+        form.setSpacing(6)
 
         self._n_samples_spin = NoWheelSpinBox(panel)
         self._n_samples_spin.setRange(30, 10000)
@@ -408,7 +514,7 @@ class MissionConfigTab(QWidget):
         form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setContentsMargins(0, 0, 0, 0)
-        form.setSpacing(8)
+        form.setSpacing(6)
 
         self._doctrine_combo = QComboBox(panel)
         for d in DOCTRINE_VALUES:
@@ -465,6 +571,36 @@ class MissionConfigTab(QWidget):
             self._humanitarian_frame.setStyleSheet(
                 "QFrame#modeOptionFrame { border: 1px solid #38e84a; border-radius: 3px; padding: 3px; background-color: transparent; }"
             )
+
+    def _update_fidelity_strip_border(self) -> None:
+        """Update Standard/Advanced frame borders to show selected fidelity."""
+        if self._simulation_fidelity == "standard":
+            self._standard_frame.setStyleSheet(
+                "QFrame#modeOptionFrame { border: 1px solid #2cff05; border-radius: 3px; padding: 3px; background-color: transparent; }"
+            )
+            self._advanced_frame.setStyleSheet(
+                "QFrame#modeOptionFrame { border: 1px solid transparent; border-radius: 3px; padding: 3px; background-color: transparent; }"
+            )
+        else:
+            self._standard_frame.setStyleSheet(
+                "QFrame#modeOptionFrame { border: 1px solid transparent; border-radius: 3px; padding: 3px; background-color: transparent; }"
+            )
+            self._advanced_frame.setStyleSheet(
+                "QFrame#modeOptionFrame { border: 1px solid #2cff05; border-radius: 3px; padding: 3px; background-color: transparent; }"
+            )
+
+    def _on_fidelity_changed(self) -> None:
+        """Update simulation_fidelity from Standard/Advanced toggle. Does not push config or run simulation."""
+        if self._standard_radio.isChecked():
+            new_fidelity = "standard"
+        else:
+            new_fidelity = "advanced"
+        if new_fidelity == self._simulation_fidelity:
+            return
+        self._simulation_fidelity = new_fidelity
+        self._update_fidelity_strip_border()
+        self._set_dirty(True)
+        self._update_panel_summaries()
 
     def _set_n_samples(self, n: int) -> None:
         self._n_samples_spin.setValue(n)
@@ -531,6 +667,23 @@ class MissionConfigTab(QWidget):
             self._payload_id = None
         self._set_dirty(True)
         self._update_panel_summaries()
+
+    @Slot(int)
+    def _on_threshold_slider_changed(self, value: int) -> None:
+        val = 50.0 + value * 0.5
+        self._threshold_spinbox.blockSignals(True)
+        self._threshold_spinbox.setValue(val)
+        self._threshold_spinbox.blockSignals(False)
+        self._threshold_pct = val
+        self.threshold_changed.emit(val)
+
+    @Slot(float)
+    def _on_threshold_spinbox_changed(self, value: float) -> None:
+        self._threshold_slider.blockSignals(True)
+        self._threshold_slider.setValue(int((value - 50.0) / 0.5))
+        self._threshold_slider.blockSignals(False)
+        self._threshold_pct = value
+        self.threshold_changed.emit(value)
 
     def _on_mission_mode_changed(self) -> None:
         if self._tactical_radio.isChecked():
@@ -616,9 +769,15 @@ class MissionConfigTab(QWidget):
     def get_config(self) -> dict:
         """Return full config dict for config_state push."""
         seed = self._seed_spin.value() if self._reproducible else random.randint(0, 2_147_483_647)
+        fidelity = (self._simulation_fidelity or "advanced").strip().lower()
+        if fidelity not in FIDELITY_VALUES:
+            fidelity = "advanced"
         return {
             "mission_mode": self._mission_mode,
             "doctrine_mode": self._doctrine,
+            "simulation_fidelity": fidelity,
+            "payload_id": self._payload_id,
+            "threshold_pct": self._threshold_spinbox.value(),
             "n_samples": self._n_samples_spin.value(),
             "random_seed": seed,
             "reproducible": self._reproducible,
@@ -629,6 +788,26 @@ class MissionConfigTab(QWidget):
 
     def init_from_config(self, cfg: dict) -> None:
         """Initialize form from config. Does not set dirty."""
+        th = float(cfg.get("threshold_pct", 75.0))
+        self._threshold_slider.blockSignals(True)
+        self._threshold_spinbox.blockSignals(True)
+        self._threshold_spinbox.setValue(th)
+        self._threshold_slider.setValue(int((th - 50.0) / 0.5))
+        self._threshold_pct = th
+        self._threshold_slider.blockSignals(False)
+        self._threshold_spinbox.blockSignals(False)
+        fidelity = str(cfg.get("simulation_fidelity", "advanced")).strip().lower()
+        if fidelity not in FIDELITY_VALUES:
+            fidelity = "advanced"
+        self._simulation_fidelity = fidelity
+        if hasattr(self, "_standard_radio") and hasattr(self, "_advanced_radio"):
+            self._standard_radio.blockSignals(True)
+            self._advanced_radio.blockSignals(True)
+            self._standard_radio.setChecked(fidelity == "standard")
+            self._advanced_radio.setChecked(fidelity == "advanced")
+            self._standard_radio.blockSignals(False)
+            self._advanced_radio.blockSignals(False)
+            self._update_fidelity_strip_border()
         self._mass_spin.blockSignals(True)
         self._cd_spin.blockSignals(True)
         self._area_spin.blockSignals(True)
@@ -648,6 +827,18 @@ class MissionConfigTab(QWidget):
 
     def load_from_snapshot(self, snapshot: dict) -> None:
         """Update display from snapshot. Does not set dirty."""
+        fidelity = str(snapshot.get("simulation_fidelity", "advanced")).strip().lower()
+        if fidelity not in FIDELITY_VALUES:
+            fidelity = "advanced"
+        self._simulation_fidelity = fidelity
+        if hasattr(self, "_standard_radio") and hasattr(self, "_advanced_radio"):
+            self._standard_radio.blockSignals(True)
+            self._advanced_radio.blockSignals(True)
+            self._standard_radio.setChecked(fidelity == "standard")
+            self._advanced_radio.setChecked(fidelity == "advanced")
+            self._standard_radio.blockSignals(False)
+            self._advanced_radio.blockSignals(False)
+            self._update_fidelity_strip_border()
         mode = str(snapshot.get("mission_mode", "TACTICAL")).strip().upper()
         if mode in MISSION_MODES:
             self._mission_mode = mode
@@ -658,6 +849,20 @@ class MissionConfigTab(QWidget):
             self._tactical_radio.blockSignals(False)
             self._humanitarian_radio.blockSignals(False)
             self._update_mode_strip_border()
+        th = snapshot.get("threshold_pct")
+        if th is not None:
+            try:
+                tv = float(th)
+                if 50.0 <= tv <= 100.0:
+                    self._threshold_slider.blockSignals(True)
+                    self._threshold_spinbox.blockSignals(True)
+                    self._threshold_spinbox.setValue(tv)
+                    self._threshold_slider.setValue(int((tv - 50.0) / 0.5))
+                    self._threshold_pct = tv
+                    self._threshold_slider.blockSignals(False)
+                    self._threshold_spinbox.blockSignals(False)
+            except (TypeError, ValueError):
+                pass
         doctrine = str(snapshot.get("doctrine_mode", "BALANCED")).strip().upper()
         if doctrine in DOCTRINE_VALUES:
             idx = self._doctrine_combo.findData(doctrine)

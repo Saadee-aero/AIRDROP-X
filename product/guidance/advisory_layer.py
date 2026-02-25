@@ -22,11 +22,21 @@ _ENGINE_INPUT_KEYS = (
 )
 
 
-def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
+def _run_engine_for_inputs(
+    engine_inputs,
+    probability_threshold,
+    random_seed,
+    *,
+    caller: str = "ANALYTICAL_SWEEP",
+    mode: str = "advanced",
+):
     """
     Run engine once with the given scenario. Temporarily applies engine_inputs to config.
     Returns (P_hit, decision, cep50). Restores config in a finally block.
+    AX-MC-CALL-TRACE-25: caller and mode for advisory sweeps.
+    AX-ADVISORY-MODE-AUDIT-26: diagnostic trace.
     """
+    print(f"[ADVISORY TRACE] ENTER | mode={mode}")
     from configs import mission_configs as cfg
     from src import monte_carlo
     from src import metrics
@@ -50,6 +60,8 @@ def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
             cfg.n_samples,
             random_seed,
             dt=cfg.dt,
+            caller=caller,
+            mode=mode,
         )
         target_pos = engine_inputs["target_pos"]
         target_radius = engine_inputs["target_radius"]
@@ -66,12 +78,19 @@ def _run_engine_for_inputs(engine_inputs, probability_threshold, random_seed):
             setattr(cfg, key, value)
 
 
-def get_impact_points_and_metrics(mission_state, random_seed):
+def get_impact_points_and_metrics(
+    mission_state,
+    random_seed,
+    *,
+    caller: str = "BASE",
+    mode: str = "advanced",
+):
     """
     Run engine once for the given mission state; return impact points and metrics.
     For use by product entry point (e.g. UI).
     Returns (impact_points, P_hit, cep50, impact_velocity_stats).
     impact_velocity_stats: dict with mean_impact_speed, std_impact_speed, p95_impact_speed (m/s).
+    AX-MC-CALL-TRACE-25: caller and mode passed through to MC trace.
     """
     from configs import mission_configs as cfg
     from src import monte_carlo
@@ -98,6 +117,8 @@ def get_impact_points_and_metrics(mission_state, random_seed):
             random_seed,
             dt=cfg.dt,
             return_impact_speeds=True,
+            caller=caller,
+            mode=mode,
         )
         target_pos = engine_inputs["target_pos"]
         target_radius = engine_inputs["target_radius"]
@@ -154,6 +175,8 @@ def evaluate_advisory(
     decision_policy,
     random_seed=42,
     position_delta_m=None,
+    *,
+    trace_mode: str = "advanced",
 ):
     """
     Evaluate drop feasibility at current UAV state and at small position variations.
@@ -177,31 +200,36 @@ def evaluate_advisory(
     uav_pos = list(base_inputs["uav_pos"])
 
     P_hit_current, decision_current, cep50_current = _run_engine_for_inputs(
-        base_inputs, probability_threshold, random_seed
+        base_inputs, probability_threshold, random_seed,
+        caller="ANALYTICAL_SWEEP", mode=trace_mode,
     )
 
     forward_inputs = dict(base_inputs)
     forward_inputs["uav_pos"] = (uav_pos[0] + delta, uav_pos[1], uav_pos[2])
     P_forward, _, _ = _run_engine_for_inputs(
-        forward_inputs, probability_threshold, random_seed
+        forward_inputs, probability_threshold, random_seed,
+        caller="ANALYTICAL_SWEEP", mode=trace_mode,
     )
 
     backward_inputs = dict(base_inputs)
     backward_inputs["uav_pos"] = (uav_pos[0] - delta, uav_pos[1], uav_pos[2])
     P_backward, _, _ = _run_engine_for_inputs(
-        backward_inputs, probability_threshold, random_seed
+        backward_inputs, probability_threshold, random_seed,
+        caller="ANALYTICAL_SWEEP", mode=trace_mode,
     )
 
     right_inputs = dict(base_inputs)
     right_inputs["uav_pos"] = (uav_pos[0], uav_pos[1] + delta, uav_pos[2])
     P_right, _, _ = _run_engine_for_inputs(
-        right_inputs, probability_threshold, random_seed
+        right_inputs, probability_threshold, random_seed,
+        caller="ANALYTICAL_SWEEP", mode=trace_mode,
     )
 
     left_inputs = dict(base_inputs)
     left_inputs["uav_pos"] = (uav_pos[0], uav_pos[1] - delta, uav_pos[2])
     P_left, _, _ = _run_engine_for_inputs(
-        left_inputs, probability_threshold, random_seed
+        left_inputs, probability_threshold, random_seed,
+        caller="ANALYTICAL_SWEEP", mode=trace_mode,
     )
 
     best_P = max(P_forward, P_backward, P_right, P_left)

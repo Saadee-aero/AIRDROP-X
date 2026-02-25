@@ -77,9 +77,12 @@ class EvaluationWorker(QThread):
             # 4) Run Monte Carlo (via adapter; no advisory for speed)
             try:
                 from adapter import run_simulation_snapshot
+
+                prev_gradient = local_config.get("prev_wind_gradient")
                 snapshot = run_simulation_snapshot(
                     config_override=override,
                     include_advisory=False,
+                    previous_wind_gradient=prev_gradient,
                 )
             except Exception:
                 # Skip emit on error; next cycle will retry
@@ -125,7 +128,7 @@ class EvaluationWorker(QThread):
             mission_mode = str(local_config.get("mission_mode", "TACTICAL")).strip().upper()
             if mission_mode not in ("TACTICAL", "HUMANITARIAN"):
                 mission_mode = "TACTICAL"
-            self.result_ready.emit({
+            emit_data = {
                 "snapshot_type": "EVALUATION",
                 "timestamp": time.time(),
                 "telemetry_snapshot": telem_snapshot,
@@ -148,9 +151,22 @@ class EvaluationWorker(QThread):
                 "doctrine_mode": doctrine,
                 "doctrine_description": doctrine_description,
                 "mission_mode": mission_mode,
-            })
+            }
+            if "sensitivity_live" in snapshot:
+                emit_data["sensitivity_live"] = snapshot["sensitivity_live"]
+            if "topology_live" in snapshot:
+                emit_data["topology_live"] = snapshot["topology_live"]
+            if "release_corridor_live" in snapshot:
+                emit_data["release_corridor_live"] = snapshot["release_corridor_live"]
+            if "fragility_state" in snapshot:
+                emit_data["fragility_state"] = snapshot["fragility_state"]
+            updated_grad = snapshot.get("updated_wind_gradient")
+            if updated_grad is not None:
+                emit_data["updated_wind_gradient"] = updated_grad
+            self.result_ready.emit(emit_data)
 
-            # 7) Maintain loop rate
+            # 7) Maintain loop rate (AX-SENSITIVITY-STABILITY-AUDIT-10: log cycle time)
             elapsed = time.perf_counter() - cycle_start
+            print("eval_cycle_ms:", round(elapsed * 1000.0, 2))
             sleep_time = max(0.0, self.target_period - elapsed)
             time.sleep(sleep_time)

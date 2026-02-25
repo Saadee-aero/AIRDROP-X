@@ -177,9 +177,9 @@ class AirdropMainWindow(QMainWindow):
         # Seed regeneration mode (explicitly toggled by operator).
         self._regen_seed_mode: bool = False
 
-        # Operator/Engineering display mode.
-        # Default mode at startup must be operator.
-        self.current_mode: str = "operator"
+        # Standard/Advanced display mode.
+        # Default mode at startup must be standard.
+        self.current_mode: str = "standard"
 
         # UI references
         self._tabs: QTabWidget | None = None
@@ -212,8 +212,8 @@ class AirdropMainWindow(QMainWindow):
         hlayout.setContentsMargins(0, 0, 0, 0)
 
         self._snapshot_label = QLabel(header)
-        self._operator_mode_btn = QPushButton("Operator", header)
-        self._engineering_mode_btn = QPushButton("Engineering", header)
+        self._operator_mode_btn = QPushButton("Standard", header)
+        self._engineering_mode_btn = QPushButton("Advanced", header)
         self._operator_mode_btn.setCheckable(True)
         self._engineering_mode_btn.setCheckable(True)
         self._operator_mode_btn.clicked.connect(
@@ -285,7 +285,7 @@ class AirdropMainWindow(QMainWindow):
         self._update_snapshot_banner()
 
     def update_mode_styles(self) -> None:
-        """Apply active/inactive visual state for Operator/Engineering mode."""
+        """Apply active/inactive visual state for Standard/Advanced mode."""
         if self._operator_mode_btn is None or self._engineering_mode_btn is None:
             return
 
@@ -306,9 +306,9 @@ class AirdropMainWindow(QMainWindow):
             "}"
         )
 
-        is_operator = self.current_mode == "operator"
-        self._operator_mode_btn.setChecked(is_operator)
-        self._engineering_mode_btn.setChecked(not is_operator)
+        is_standard = self.current_mode == "standard"
+        self._operator_mode_btn.setChecked(is_standard)
+        self._engineering_mode_btn.setChecked(not is_standard)
 
         self._operator_mode_btn.setStyleSheet(
             active_style if is_operator else inactive_style
@@ -318,10 +318,10 @@ class AirdropMainWindow(QMainWindow):
         )
 
     def _on_operator_mode_clicked(self) -> None:
-        if self.current_mode == "operator":
+        if self.current_mode == "standard":
             self.update_mode_styles()
             return
-        self.current_mode = "operator"
+        self.current_mode = "standard"
         current_idx = self._tabs.currentIndex() if self._tabs is not None else 0
         self._build_tabs()
         if self._tabs is not None and 0 <= current_idx < self._tabs.count():
@@ -329,10 +329,10 @@ class AirdropMainWindow(QMainWindow):
         self.update_mode_styles()
 
     def _on_engineering_mode_clicked(self) -> None:
-        if self.current_mode == "engineering":
+        if self.current_mode == "advanced":
             self.update_mode_styles()
             return
-        self.current_mode = "engineering"
+        self.current_mode = "advanced"
         current_idx = self._tabs.currentIndex() if self._tabs is not None else 0
         self._build_tabs()
         if self._tabs is not None and 0 <= current_idx < self._tabs.count():

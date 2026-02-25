@@ -138,6 +138,9 @@ def run_monte_carlo(
     dt=0.01,
     return_trajectories=False,
     return_impact_speeds=False,
+    *,
+    caller: str = "BASE",
+    mode: str = "advanced",
 ):
     """
     Monte Carlo uncertainty propagation. One wind sample per trajectory.
@@ -147,7 +150,10 @@ def run_monte_carlo(
 
     Implementation: batch vectorized. No Python loop over samples.
     Complexity O(S) with S = integration steps (vs O(N*S) previously).
+
+    AX-MC-CALL-TRACE-25: caller and mode for diagnostic tracing.
     """
+    print(f"[MC TRACE] caller={caller} | mode={mode} | N={n_samples}")
     pos0 = np.asarray(pos0, dtype=float).reshape(3)
     vel0 = np.asarray(vel0, dtype=float).reshape(3)
     wind_mean = np.asarray(wind_mean, dtype=float).reshape(3)
